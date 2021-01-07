@@ -32,6 +32,7 @@ __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
   }
 }
 */
+/*
 template <typename T, int BlockDimX, int BlockDimY, int GridDimX>
 __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
                                   const int64_t N, const int64_t K,
@@ -49,6 +50,84 @@ __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
     idy += BlockDimY * GridDimX;
   }
 }
+*/
+
+/*
+    eg: Tile = 4, for each warp each loop
+    data:    out0 out1 ...  out7  out0   out1 ... out7
+    row:      0     0  ...    0     1     1   ...   3
+      |       |     |         |     |     |         |
+      V       V     V         V     V     V         V
+    tile:   tile0 tile1 ... tile7 tile0 tile1 ... tile7
+      |       |     |         |     |     |         |
+      V       V     V         V     V     V         V
+    thread:   t0   t1   ...  t7    t8    t9   ...  t31
+                       CudaAtomicAdd
+      |       |     |         |     |     |         |
+      V       V     V         V     V     V         V
+    data:    tab0 tab1 ...  tab7  tab0   tab1 ... tab7
+    row:     ids0 ids0 ...  ids0  ids1   ids1 ... ids3
+  */
+
+template <typename T, int Tile>
+__global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
+                                  const int64_t N, const int64_t K,
+                                  const int64_t D) {                          
+  const int tid = threadIdx.x + threadIdx.y * blockDim.x + blockIdx.x * blockDim.x * blockDim.y;
+  const int warp_id = tid / 32, tid_of_warp = tid % 32;
+  const int tile_num = (gridDim.x * blockDim.x * blockDim.y + Tile - 1) / Tile;
+  const int tile_of_warp = 32 / Tile;  // tile_of_warp = 8
+  int tile_id = warp_id * tile_of_warp + tid_of_warp % 8;
+
+  while(tile_id < D) {
+    for(int i = tid_of_warp / tile_of_warp; i < K; i += Tile) {
+      int64_t id = ids[i];
+      const T *out = output + i * D;
+      T *tab = table + id * D;
+
+      atomicAdd(&tab[tile_id], out[tile_id]);
+    }
+    tile_id += tile_num;
+  }
+}
+
+/*
+template <typename T>
+__global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
+                                  const int64_t N, const int64_t K,
+                                  const int64_t D) {
+  const int stride = gridDim.x * blockDim.x * blockDim.y;
+  int idx = threadIdx.x + threadIdx.y * blockDim.x + blockIdx.x * blockDim.x * blockDim.y;
+
+  while(idx < D) {
+    for(int i = 0; i < K; i ++) {
+      int64_t id = ids[i];
+      const T *out = output + i * D;
+      T *tab = table + id * D;
+
+      tab[idx] += out[idx];
+    }
+    idx += stride;
+  }
+}
+template <>
+__global__ void LookupTableV2Grad<half>(half *table, const half *output, const int64_t *ids,
+                                  const int64_t N, const int64_t K,
+                                  const int64_t D) {
+  const int stride = gridDim.x * blockDim.x * blockDim.y;
+  int idx = threadIdx.x + threadIdx.y * blockDim.x + blockIdx.x * blockDim.x * blockDim.y;
+
+  while(idx < D / 2) {
+    for(int i = 0; i < K; i ++) {
+      int64_t id = ids[i];
+      const half2 *out = reinterpret_cast<const half2*>(output + i * D);
+      half2 *tab = reinterpret_cast<half2*>(table + id * D);
+
+      tab[idx] = __hadd2(tab[idx], out[idx]);
+    }
+    idx += stride;
+  }
+}*/
 
 template<typename TYPE>
 float TimeOfKernel(TYPE *table, int64_t *ids, TYPE *output, 
@@ -61,7 +140,7 @@ float TimeOfKernel(TYPE *table, int64_t *ids, TYPE *output,
     cudaEventCreate(&stop);
 
     cudaEventRecord(start, context);
-    LookupTableV2Grad<TYPE, 128, 8, 8><<<grids, threads, 0, context>>>(
+    LookupTableV2Grad<TYPE, 8><<<grids, threads, 0, context>>>(
           table, output, ids, N, K, D);
     cudaEventRecord(stop, context);
     cudaEventSynchronize(stop);
@@ -167,13 +246,13 @@ void TestKernel(int N, int K, int D, cudaStream_t &context) {
 
 int main() {
     int64_t N, K, D;
-    N = 1000000;
+    N = K = D = 1024;
 
     srand((unsigned)time(NULL));
     cudaStream_t context;
     cudaStreamCreate(&context);
 
-    TestKernel(1024, 1024, 1024, context);
+    TestKernel(N, K, D, context);
     /*
     for(D = 64; D <= 1024; D <<= 2) {
         for(K = 1; K <= 1000000; K *= 100) {
@@ -183,7 +262,6 @@ int main() {
         }
     }
     */
-
     cudaStreamDestroy(context);
     return 0;
 }
