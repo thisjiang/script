@@ -2,6 +2,7 @@
 #include <cuda_fp16.h>
 
 #include <fstream>
+#include <vector>
 
 #include "stdio.h"
 #include "time.h"
@@ -24,11 +25,7 @@ __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
   }
 }
 
-template <typename T, int Tile>
-__global__ void LookupTableV2Grad2(T *table, const T *output, const int64_t *ids,
-                                  const int64_t N, const int64_t K,
-                                  const int64_t D) {
-  /*
+/*
     data:    out0 out1 ...  out7  out0   out1 ... out7
     row:     ids0 ids0 ...  ids0  ids1   ids1 ... ids3  
       |       |     |         |     |     |         |
@@ -39,8 +36,12 @@ __global__ void LookupTableV2Grad2(T *table, const T *output, const int64_t *ids
     thread:   t0   t1   ...  t7    t8    t9   ...  t31  
     
     each tile (4 threads) atomicAdd K data
-  */
-                          
+*/
+/*
+template <typename T, int Tile>
+__global__ void LookupTableV2Grad2(T *table, const T *output, const int64_t *ids,
+                                  const int64_t N, const int64_t K,
+                                  const int64_t D) {
   const int tid = threadIdx.x + threadIdx.y * blockDim.x + blockIdx.x * blockDim.x * blockDim.y;
   const int warp_id = tid / 32, tid_of_warp = tid % 32;
   const int tile_num = (gridDim.x * blockDim.x * blockDim.y + Tile - 1) / Tile;
@@ -56,6 +57,97 @@ __global__ void LookupTableV2Grad2(T *table, const T *output, const int64_t *ids
       atomicAdd(&tab[tile_id], out[tile_id]);
     }
     tile_id += tile_num;
+  }
+}*/
+/*
+template <typename T>
+__global__ void LookupTableV2Grad2(T *table, const T *output, const int64_t *ids,
+                                  const int64_t N, const int64_t K,
+                                  const int64_t D) {
+  const int stride = gridDim.x * blockDim.x * blockDim.y;
+  int64_t idx = threadIdx.x + threadIdx.y * blockDim.x + blockIdx.x * blockDim.x * blockDim.y;
+
+  extern __shared__ int64_t s_ids[];
+#pragma unroll
+  for(int64_t i = idx; i < K; i += blockDim.x * blockDim.y) s_ids[i] = ids[i];
+  __syncthreads();
+
+  while(idx < D) {
+#pragma unroll
+    for(int64_t i = 0; i < K; i ++) {
+      int64_t id = s_ids[i];
+      const T *out = output + i * D;
+      T *tab = table + id * D;
+
+      tab[idx] += out[idx];
+    }
+    idx += stride;
+  }
+}
+*/
+template <typename T>
+__global__ void LookupTableV2Grad2(T *table, const T *output, const int64_t *ids,
+                                  const int64_t N, const int64_t K,
+                                  const int64_t D, const int64_t padding_idx) {
+  const int stride = gridDim.x * blockDim.x;
+  int64_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+  extern __shared__ int64_t s_ids[];
+#pragma unroll
+  for (int64_t i = threadIdx.x; i < K; i += blockDim.x) s_ids[i] = ids[i];
+  __syncthreads();
+
+  T *tab_padding = table + padding_idx * D;
+  while (idx < D) {
+    T padding_sum = tab_padding[idx];
+
+#pragma unroll
+    for (int64_t i = 0; i < K; i++) {
+      int64_t id = s_ids[i];
+      const T *out = output + i * D;
+      T *tab = table + id * D;
+
+      if(id == padding_idx)
+        padding_sum += out[idx];
+      else 
+        tab[idx] += out[idx];
+    }
+    tab_padding[idx] = padding_sum;
+    idx += stride;
+  }
+}
+
+template <typename T>
+__global__ void LookupTableV2Grad_N16(T *table, const T *output, const int64_t *ids,
+                                  const int64_t N, const int64_t K,
+                                  const int64_t D){
+  const int stride = gridDim.x * blockDim.x;
+  int64_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+  extern __shared__ int64_t s_ids[];
+#pragma unroll
+  for (int64_t i = threadIdx.x; i < K; i += blockDim.x) s_ids[i] = ids[i];
+  __syncthreads();
+
+  while (idx < D) {
+    T tab_res[16]{(T)0};
+#pragma unroll
+    for(int i = 0; i < N; i ++) {
+      T *tab = table + i * D;
+      tab_res[i] = tab[idx];
+    }
+#pragma unroll
+    for (int64_t i = 0; i < K; i++) {
+      int64_t id = s_ids[i];
+      const T *out = output + i * D;
+      tab_res[id] += out[idx];
+    }
+#pragma unroll
+    for(int i = 0; i < N; i ++) {
+      T *tab = table + i * D;
+      tab[idx] = tab_res[i];
+    }
+    idx += stride;
   }
 }
 
@@ -115,9 +207,12 @@ void Print2File(T *data, int64_t N, int64_t D, const char *filename) {
 }
 
 void TestKernel(int N, int K, int D, cudaStream_t &context) {
-    dim3 threads(128, 8);
-    dim3 grids(8, 1);
-    
+    dim3 threads1(128, 8);
+    dim3 grids1(8, 1);
+
+    int threads2 = std::min(D, 256);
+    int grids2((D + 255) / 256);
+
     //float
     float *table_d32_1 = MallocDevice<float>(N * D), *table_d32_2 = MallocDevice<float>(N * D);
     int64_t *ids_h = MallocHost<int64_t>(K), *ids_d = MallocDevice<int64_t>(K);
@@ -134,10 +229,15 @@ void TestKernel(int N, int K, int D, cudaStream_t &context) {
     }
     Host2Device(out_d_32, out_h_32, K * D, context);
 
-    LookupTableV2Grad<float, 128, 8, 8><<<grids, threads, 0, context>>>(
+    LookupTableV2Grad<float, 128, 8, 8><<<grids1, threads1, 0, context>>>(
           table_d32_1, out_d_32, ids_d, N, K, D);
-    LookupTableV2Grad2<float, 4><<<grids, threads, 0, context>>>(
+    if(N <= 16) {
+      LookupTableV2Grad_N16<float><<<grids2, threads2, K * sizeof(int64_t), context>>>(
           table_d32_2, out_d_32, ids_d, N, K, D);
+    } else {
+      LookupTableV2Grad2<float><<<grids2, threads2, K * sizeof(int64_t), context>>>(
+          table_d32_2, out_d_32, ids_d, N, K, D, 0);
+    }
 
     float *table_h32_1 = MallocHost<float>(N * D), *table_h32_2 = MallocHost<float>(N * D);
     Device2Host(table_h32_1, table_d32_1, N * D, context);
@@ -154,10 +254,15 @@ void TestKernel(int N, int K, int D, cudaStream_t &context) {
     }
     Host2Device(out_d_16, out_h_16, K * D, context);
 
-    LookupTableV2Grad<half, 128, 8, 8><<<grids, threads, 0, context>>>(
+    LookupTableV2Grad<half, 128, 8, 8><<<grids1, threads1, 0, context>>>(
           table_d16_1, out_d_16, ids_d, N, K, D);
-    LookupTableV2Grad2<half, 4><<<grids, threads, 0, context>>>(
+    if(N <= 16) {
+      LookupTableV2Grad_N16<half><<<grids2, threads2, K * sizeof(int64_t), context>>>(
           table_d16_2, out_d_16, ids_d, N, K, D);
+    } else {
+      LookupTableV2Grad2<half><<<grids2, threads2, K * sizeof(int64_t), context>>>(
+          table_d16_2, out_d_16, ids_d, N, K, D, 0);
+    }
 
     half *table_h16_1 = MallocHost<half>(N * D), *table_h16_2 = MallocHost<half>(N * D);
     Device2Host(table_h16_1, table_d16_1, N * D, context);
@@ -203,7 +308,20 @@ int main() {
     cudaStream_t context;
     cudaStreamCreate(&context);
 
-    TestKernel(N, K, D, context);
+    //TestKernel(N, K, D, context);
+    std::vector<int64_t> vecN, vecK, vecD;
+    vecN = {2, 64, 100, 1024, 10240};
+    vecK = {2, 64, 100, 1024, 10240};
+    vecD = {32, 256, 512, 768, 1024};
+    for(int i = 0; i < vecN.size(); i ++) {
+      for(int j = 0; j < vecK.size(); j ++) {
+        for(int k = 0; k < vecD.size(); k ++) {
+            printf("N:%d D:%d K:%d\n", vecN[i], vecD[i], vecK[i]);
+            TestKernel(vecN[i], vecK[j], vecD[k], context);
+            printf("\n");
+        }
+      }
+    }
 
     cudaStreamDestroy(context);
     return 0;

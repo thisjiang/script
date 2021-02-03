@@ -1,8 +1,28 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 
+#include <vector>
+
 #include "stdio.h"
 #include "time.h"
+
+template <typename T, int BlockDimX, int BlockDimY, int GridDimX>
+__global__ void LookupTableV2GradBase(T *table, const T *output, const int64_t *ids,
+                                  const int64_t N, const int64_t K,
+                                  const int64_t D) {
+  int idx = threadIdx.x;
+  int idy = blockIdx.x + threadIdx.y * GridDimX;
+
+  while (idy < K) {
+    int64_t id = ids[idy];
+    const T *out = output + idy * D;
+    T *tab = table + id * D;
+    for (int i = idx; i < D; i += BlockDimX) {
+      atomicAdd(&tab[i], out[i]);
+    }
+    idy += BlockDimY * GridDimX;
+  }
+}
 /*
 template <typename T, int BlockDimX, int BlockDimY, int GridDimX>
 __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
@@ -68,7 +88,7 @@ __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
     data:    tab0 tab1 ...  tab7  tab0   tab1 ... tab7
     row:     ids0 ids0 ...  ids0  ids1   ids1 ... ids3
   */
-
+/*
 template <typename T, int Tile>
 __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
                                   const int64_t N, const int64_t K,
@@ -90,58 +110,75 @@ __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
     tile_id += tile_num;
   }
 }
+*/
 
-/*
-template <typename T>
+template <typename T, int BlockSize>
 __global__ void LookupTableV2Grad(T *table, const T *output, const int64_t *ids,
                                   const int64_t N, const int64_t K,
                                   const int64_t D) {
-  const int stride = gridDim.x * blockDim.x * blockDim.y;
-  int idx = threadIdx.x + threadIdx.y * blockDim.x + blockIdx.x * blockDim.x * blockDim.y;
+  int tid = threadIdx.x;
+  const int64_t stride = (N + gridDim.x - 1) / gridDim.x;
+  const int64_t N_beg = blockIdx.x * stride;
+  const int64_t N_end = N_beg + stride;
 
-  while(idx < D) {
-    for(int i = 0; i < K; i ++) {
-      int64_t id = ids[i];
-      const T *out = output + i * D;
-      T *tab = table + id * D;
+  __shared__ int64_t s_ids[BlockSize];
+  for(int64_t k = 0; k < K; k += BlockSize) {
+      s_ids[tid] = ids[k + tid];
+    __syncthreads();
 
-      tab[idx] += out[idx];
+#pragma unroll
+    for (int i = 0; i < BlockSize; i++) {
+      int64_t id = s_ids[i];
+      if(id >= N_beg && id < N_end) {
+        const T *out = output + (k + i) * D;
+        T *tab = table + id * D;
+
+#pragma unroll
+        for(int idx = tid; idx < D; idx += BlockSize)
+          tab[idx] += out[idx];
+      }
     }
-    idx += stride;
   }
 }
-template <>
-__global__ void LookupTableV2Grad<half>(half *table, const half *output, const int64_t *ids,
-                                  const int64_t N, const int64_t K,
-                                  const int64_t D) {
-  const int stride = gridDim.x * blockDim.x * blockDim.y;
-  int idx = threadIdx.x + threadIdx.y * blockDim.x + blockIdx.x * blockDim.x * blockDim.y;
-
-  while(idx < D / 2) {
-    for(int i = 0; i < K; i ++) {
-      int64_t id = ids[i];
-      const half2 *out = reinterpret_cast<const half2*>(output + i * D);
-      half2 *tab = reinterpret_cast<half2*>(table + id * D);
-
-      tab[idx] = __hadd2(tab[idx], out[idx]);
-    }
-    idx += stride;
-  }
-}*/
 
 template<typename TYPE>
-float TimeOfKernel(TYPE *table, int64_t *ids, TYPE *output, 
+float TimeOfBase(TYPE *table, int64_t *ids, TYPE *output, 
                     int N, int K, int D, cudaStream_t &context) {
     dim3 threads(128, 8);
-    dim3 grids(8, 1);
+    dim3 grids(8);
     
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
     cudaEventRecord(start, context);
-    LookupTableV2Grad<TYPE, 8><<<grids, threads, 0, context>>>(
-          table, output, ids, N, K, D);
+    LookupTableV2GradBase<TYPE, 128, 8, 8><<<grids, threads, 0, context>>>(
+        table, output, ids, N, K, D);
+    cudaEventRecord(stop, context);
+    cudaEventSynchronize(stop);
+
+    float time_of_kernel;
+    cudaEventElapsedTime(&time_of_kernel, start, stop);
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    return time_of_kernel;
+}
+
+template<typename TYPE>
+float TimeOfTest(TYPE *table, int64_t *ids, TYPE *output, 
+                    int N, int K, int D, cudaStream_t &context) {
+    dim3 threads(256);
+    dim3 grids(std::min(K, 16), 1);
+    
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start, context);
+    LookupTableV2Grad<TYPE, 256><<<grids, threads, 0, context>>>(
+        table, output, ids, N, K, D);
     cudaEventRecord(stop, context);
     cudaEventSynchronize(stop);
 
@@ -180,10 +217,20 @@ void Device2Host(T *des, T *src, int64_t size, cudaStream_t &context) {
     cudaMemcpyAsync(des, src, size * sizeof(T), cudaMemcpyDeviceToHost, context);
 }
 
-double MaxError(float *data_f, half *data_h, int64_t size) {
+template<typename T>
+float Convert2Float(T input) {
+    return static_cast<float>(input);
+}
+
+template<>
+float Convert2Float<half>(half input) {
+    return __half2float(input);
+}
+template<typename T1, typename T2>
+double MaxError(T1 *data_1, T2 *data_2, int64_t size) {
     double maxerr = 0.0, err = 0.0;
     for(int i = 0; i < size; i ++) {
-        err = fabs(data_f[i] - __half2float(data_h[i]));
+        err = fabs(Convert2Float<T1>(data_1[i]) - Convert2Float<T2>(data_2[i]));
         if(err > maxerr) maxerr = err;
     }
     return maxerr;
@@ -191,7 +238,7 @@ double MaxError(float *data_f, half *data_h, int64_t size) {
 
 void TestKernel(int N, int K, int D, cudaStream_t &context) {
     //float
-    float *table_d_32 = MallocDevice<float>(N * D);
+    float *table_d_32 = MallocDevice<float>(N * D), *table_d32_base = MallocDevice<float>(N * D);
     int64_t *ids_h = MallocHost<int64_t>(K), *ids_d = MallocDevice<int64_t>(K);
     float *out_h_32 = MallocHost<float>(K * D), *out_d_32 = MallocDevice<float>(K * D);
 
@@ -205,13 +252,15 @@ void TestKernel(int N, int K, int D, cudaStream_t &context) {
     }
     Host2Device(out_d_32, out_h_32, K * D, context);
 
-    float time_fp32 = TimeOfKernel(table_d_32, ids_d, out_d_32, N, K, D, context);
+    float time_fp32 = TimeOfTest(table_d_32, ids_d, out_d_32, N, K, D, context);
+    float time_fp32_base = TimeOfBase(table_d32_base, ids_d, out_d_32, N, K, D, context);
 
-    float *table_h_32 = MallocHost<float>(N * D);
+    float *table_h_32 = MallocHost<float>(N * D), *table_h32_base = MallocHost<float>(N * D);
     Device2Host(table_h_32, table_d_32, N * D, context);
+    Device2Host(table_h32_base, table_d32_base, N * D, context);
     
     //half
-    half *table_d_16 = MallocDevice<half>(N * D);
+    half *table_d_16 = MallocDevice<half>(N * D), *table_d16_base = MallocDevice<half>(N * D);
     half *out_h_16 = MallocHost<half>(K * D), *out_d_16 = MallocDevice<half>(K * D);
 
     SetZero(table_d_16, N * D, context);
@@ -220,17 +269,26 @@ void TestKernel(int N, int K, int D, cudaStream_t &context) {
     }
     Host2Device(out_d_16, out_h_16, K * D, context);
 
-    float time_fp16 = TimeOfKernel(table_d_16, ids_d, out_d_16, N, K, D, context);
+    float time_fp16 = TimeOfTest(table_d_16, ids_d, out_d_16, N, K, D, context);
+    float time_fp16_base = TimeOfBase(table_d16_base, ids_d, out_d_16, N, K, D, context);
 
-    half *table_h_16 = MallocHost<half>(N * D);
+    half *table_h_16 = MallocHost<half>(N * D), *table_h16_base = MallocHost<half>(N * D);
     Device2Host(table_h_16, table_d_16, N * D, context);
+    Device2Host(table_h16_base, table_d16_base, N * D, context);
 
     //check result
     double maxerr_init = MaxError(out_h_32, out_h_16, K * D);
     double maxerr = MaxError(table_h_32, table_h_16, N * D);
+    double maxerr_base = MaxError(table_h32_base, table_h16_base, N * D);
 
     //print info
-    printf("fp32 time %fms vs fp16 time %fms -- error:%f while initial %f\n", time_fp32, time_fp16, maxerr, maxerr_init);
+    /*
+    printf("fp32 test time %fms vs base time %fms\n", time_fp32, time_fp32_base);
+    printf("fp16 test time %fms vs base time %fms\n", time_fp16, time_fp16_base);
+    printf("Error test vs base: %f vs %f\n", maxerr, maxerr_base);
+    */
+   printf("%d %d %d %f %f %f %f %f %f\n", 
+          N, K, D, time_fp32, time_fp32_base, time_fp16, time_fp16_base, maxerr, maxerr_base);
 
     cudaFree(table_d_32);
     cudaFree(table_d_16);
@@ -246,22 +304,29 @@ void TestKernel(int N, int K, int D, cudaStream_t &context) {
 
 int main() {
     int64_t N, K, D;
-    N = K = D = 1024;
+    N = 1024;
+    K = 100;
+    D = 786;
 
     srand((unsigned)time(NULL));
     cudaStream_t context;
     cudaStreamCreate(&context);
+    printf("N K D test32-time/ms base32-time/ms test16-time/ms base16-time/ms error32 error16\n");
 
-    TestKernel(N, K, D, context);
-    /*
-    for(D = 64; D <= 1024; D <<= 2) {
-        for(K = 1; K <= 1000000; K *= 100) {
-            printf("N:%d D:%d K:%d\n", N, D, K);
-            TestKernel(N, K, D, context);
-            printf("\n");
+    //TestKernel(N, K, D, context);
+    
+    std::vector<int64_t> vecN, vecK, vecD;
+    vecN = {1, 2, 100, 1024, 10240};
+    vecK = {1, 2, 100, 1024, 10240};
+    vecD = {32, 256, 768, 1024};
+    for(int i = 0; i < vecD.size(); i ++) {
+      for(int j = 0; j < vecK.size(); j ++) {
+        for(int k = 0; k < vecN.size(); k ++) {
+            TestKernel(vecN[k], vecK[j], vecD[i], context);
         }
+      }
     }
-    */
+    
     cudaStreamDestroy(context);
     return 0;
 }

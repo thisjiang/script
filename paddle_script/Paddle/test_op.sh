@@ -2,9 +2,9 @@
 
 export CUDA_VISIBLE_DEVICES=3
 
-OP_NAME=lookup_table_v2
+OP_NAME=where_index
 KERNEL=LookupTableV2Grad
-FILE_SUFFIX=fp32
+FILE_SUFFIX=fp16
 
 
 PROFILE_PATH=/Paddle/profile/${OP_NAME}/
