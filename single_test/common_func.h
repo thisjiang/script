@@ -113,8 +113,8 @@ __global__ void KeMaxError(const T *a, const T *b, const size_t n,
 template<typename T>
 T MaxErrorDevice(const T *a, const T *b, const size_t n,
                 cudaStream_t &stream) {
-    constexpr int threads = 512;
-    int grids = (n + threads - 1) / threads;
+    const int threads = 256;
+    const int grids = (n + threads - 1) / threads;
 
     T *block_max;
     cudaMalloc(&block_max, (grids + 1) * sizeof(T));
@@ -125,7 +125,8 @@ T MaxErrorDevice(const T *a, const T *b, const size_t n,
                             block_max + grids, grids, stream);
     cudaMalloc(&tmp_mem, tmp_size);
 
-    KeMaxError<T, threads><<<threads, grids, 0, stream>>>
+    cudaMemsetAsync(block_max, 0, (grids + 1) * sizeof(T), stream);
+    KeMaxError<T, threads><<<grids, threads, 0, stream>>>
                                 (a, b, n, block_max);
     cub::DeviceReduce::Max(tmp_mem, tmp_size, block_max, 
                            block_max + grids, grids, stream);
