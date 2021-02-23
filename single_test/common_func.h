@@ -1,36 +1,84 @@
 #include "stdio.h"
 #include "time.h"
 
-#include "cub/cub.cuh"
-#include <cuda_runtime.h>
-#include <cuda_fp16.h>
-
 #include <iostream>
 #include <vector>
 #include <random>
+#include <array>
+#include <initializer_list>
+
+#include "cub/cub.cuh"
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
 
 /***********************************************************/
 #define SUCCESS 0
 #define CUDA_FAILED -1
 #define CHECK_FAILED 1
 
+/***********************************************************/
+
+#define HOSTDEVICE __forceinline__ __device__ __host__
 
 /***********************************************************/
 
+template <typename T, int Size, T DefaultValue>
+struct __align__(sizeof(T)) Array {
+    HOSTDEVICE const T& operator[](int index) const {
+        return data[index];
+    }
+    HOSTDEVICE T& operator[](int index) {
+        return data[index];
+    }
+
+    HOSTDEVICE Array() {
+#pragma unroll
+        for(int i = 0; i < Size; i ++) data[i] = DefaultValue;
+    }
+
+    HOSTDEVICE Array(const std::initializer_list<T> &arr) {
+        int i = 0;
+        for(T value : arr) data[i ++] = value;
+#pragma unroll
+        for(; i < Size; i ++) data[i] = DefaultValue;
+    }
+
+    HOSTDEVICE Array(const Array &arr) {
+#pragma unroll
+        for(int i = 0; i < Size; i ++) data[i] = arr.data[i];
+    }
+
+    T data[Size];
+};
+
+struct Dim3 : Array<size_t, 3, 1> {
+    HOSTDEVICE Dim3() : Array<size_t, 3, 1>() {}
+    HOSTDEVICE Dim3(size_t x) : Array<size_t, 3, 1>({x}) {}
+    HOSTDEVICE Dim3(size_t x, size_t y) : Array<size_t, 3, 1>({x, y}) {}
+    HOSTDEVICE Dim3(size_t x, size_t y, size_t z) : Array<size_t, 3, 1>({x, y, z}) {}
+};
+
+
+/***********************************************************/
+
+constexpr int MAX_BLOCK_DIM = 1024;
 constexpr int WARP_SIZE = 32;
 
 /***********************************************************/
 
+
+/***********************************************************/
+
 template<typename IN, typename OUT>
-__forceinline__ __device__ __host__ OUT type2type(IN val) {
+HOSTDEVICE OUT type2type(IN val) {
     return static_cast<OUT>(val);
 }
 template<>
-__forceinline__ __device__ __host__ float type2type<half, float>(half val) {
+HOSTDEVICE float type2type<half, float>(half val) {
     return __half2float(val);
 }
 template<>
-__forceinline__ __device__ __host__ half type2type<float, half>(float val) {
+HOSTDEVICE half type2type<float, half>(float val) {
     return __float2half(val);
 }
 
@@ -168,7 +216,7 @@ bool CheckSameDevice(const T *a, const T *b, size_t n,
     int *err_d, err_h = 0;
     cudaMalloc(&err_d, sizeof(int));
     cudaMemsetAsync(err_d, 0, sizeof(int), stream);
-    KeCheckSameKernel<T><<<threads, grids, 0, stream>>>(a, b, n, err_d);
+    KeCheckSameKernel<T><<<grids, threads, 0, stream>>>(a, b, n, err_d);
     cudaMemcpyAsync(&err_h, err_d, sizeof(int), cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
     cudaFree(err_d); // implict sync
@@ -219,12 +267,89 @@ PRINT_FLOAT(double)
 #undef PRINT_FLOAT
 
 /***********************************************************/
+
 template<typename T>
-void Random(T *data, size_t n, const T b = 1, const T a = 0) {
+void Print(const T *data, const int row, const int col) {
+    printf("[%d, %d]\n", row, col);
+    for(int i = 0; i < row; i ++) {
+        for(int j = 0; j < col; j ++) {
+            print(data[i * col + j]);
+            printf(" ");
+        }
+        printf("\n");
+    }
+}
+
+template<typename T>
+void Print(const T *data, const int num, const int row, const int col) {
+    printf("[%d, %d, %d]\n", num, row, col);
+    const int stride = row * col;
+    for(int k = 0; k < num; k ++) {
+        printf("[%d]\n", k);
+        for(int i = 0; i < row; i ++) {
+            for(int j = 0; j < col; j ++) {
+                print(data[k * stride + i * col + j]);
+                printf(" ");
+            }
+            printf("\n");
+        }
+    }
+}
+
+template<typename T>
+void Print(const T *data, const Dim3 &dims) {
+    Print(data, dims[0], dims[1], dims[2]);
+}
+
+template<typename T, size_t D>
+void Print(const T *data, const std::array<int, D> &dims) {
+    if(D == 1) {
+        Print(data, 1, dims[0]);
+        return;
+    } else if(D == 2) {
+        Print(data, dims[0], dims[1]);
+        return;
+    } else if(D == 3) {
+        Print(data, dims[0], dims[1], dims[2]);
+        return;
+    }
+
+    printf("[");
+    for(auto num : dims) printf(" %d,", num);
+    printf("]\n");
+
+    std::array<int, D> stride;
+    stride[D - 1] = 1;
+    for(int i = D - 2; i >= 0; i --)
+        stride[i] = dims[i + 1] * stride[i + 1];
+
+    int len = 1;
+    for(int num : dims) len *= num;
+    for(int i = 0; i < len; i ++) {
+        if(i % stride[D - 1] == 0) printf("\n");
+        if(i % stride[D - 2] == 0) {
+           printf("[");
+           for(int j = 0; j < D - 2; j ++) printf(" %d,", len / stride[j]);
+           printf("]\n");
+        }
+        print(data[i]);
+        printf(" ");
+    }
+}
+
+
+/***********************************************************/
+template<typename T>
+void Random(T *data, size_t n, const T b, const T a = 0) {
     srand(time(0));
     for(int i = 0; i < n; i ++) {
         data[i] = a + rand() % (b - a);
     }
+}
+
+template<typename T>
+void Random(T *data, size_t n) {
+    Random<T>(data, n, static_cast<T>(1), static_cast<T>(0));
 }
 
 #define RANDOM_INT(T)  \
@@ -233,6 +358,10 @@ void Random(T *data, size_t n, const T b = 1, const T a = 0) {
         std::default_random_engine seed(time(0));   \
         std::uniform_int_distribution<T> unirand(a, b); \
         for(int i = 0; i < n; i ++) data[i] = unirand(seed);    \
+    }   \
+    template<> void Random(T *data, size_t n) { \
+        Random<T>(data, n, type2type<int, T>(INT_MAX), \
+                  type2type<int, T>(INT_MIN)); \
     }
 
 RANDOM_INT(int)
@@ -247,6 +376,10 @@ RANDOM_INT(int8_t)
         std::default_random_engine seed(time(0));   \
         std::uniform_real_distribution<T> unirand(a, b); \
         for(int i = 0; i < n; i ++) data[i] = unirand(seed);    \
+    }   \
+    template<> void Random(T *data, size_t n) { \
+        Random<T>(data, n, type2type<float, T>(10.0f), \
+                  type2type<float, T>(-10.0f)); \
     }
 
 RANDOM_FLOAT(float)
@@ -258,6 +391,41 @@ void Random<half>(half *data, size_t n, const half b, const half a) {
     std::default_random_engine seed(time(0));
     std::uniform_real_distribution<float> unirand(a, b);
     for(int i = 0; i < n; i ++) data[i] = unirand(seed);
+}
+template<> void Random<half>(half *data, size_t n) {
+    Random<half>(data, n, type2type<float, half>(1.0f), 
+                 type2type<float, half>(-1.0f));
+}
+
+/***********************************************************/
+
+static HOSTDEVICE size_t GetSize(const dim3 &dims) {
+    return dims.x * dims.y * dims.z;
+}
+
+static HOSTDEVICE size_t GetSize(const Dim3 &dims) {
+    return static_cast<size_t>(dims[0] * dims[1] * dims[2]);
+}
+
+template<typename T>
+static inline size_t GetSize(const std::vector<T> &dims) {
+    size_t res = 1;
+    for(auto d : dims) res *= d;
+    return res;
+}
+
+template<typename T, size_t D>
+static inline size_t GetSize(const std::array<T, D> &dims) {
+    size_t res = 1;
+    for(auto d : dims) res *= d;
+    return res;
+}
+
+template<typename T>
+static HOSTDEVICE size_t GetSize(const T *dims, int n) {
+    size_t res = 1;
+    for(int i = 0; i < n; i ++) res *= dims[i];
+    return res;
 }
 
 /***********************************************************/
