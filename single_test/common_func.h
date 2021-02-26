@@ -22,10 +22,9 @@
 static inline const char* GetErrorString(const int status) {
     switch(status) {
         case SUCCESS: return "SUCCESS";
-        case CUDA_FAILED: return "Cuda ERROR";
-        case CUDNN_FAILED: return "Cudnn ERROR";
-        case CHECK_FAILED: return "Check Result ERROR";
-        default: return "Unsupported ERROR";
+        case CUDA_FAILED: return "Cuda kernel run failed";
+        case CUDNN_FAILED: return "Cudnn run failed";
+        case CHECK_FAILED: return "Check Result failed";
     }
     return "Unsupported ERROR";
 }
