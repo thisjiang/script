@@ -7,7 +7,7 @@
 
 #include <iostream>
 
-constexpr int LOOPNUM=10;
+constexpr int LOOPNUM=100;
 typedef Dim3 Index3;
 
 // Base Reference object
@@ -17,7 +17,7 @@ __global__ void KeSimpleCopy(const T* __restrict__ input, Dim3 input_dims,
   const int index = blockIdx.x * blockDim.x + threadIdx.x;
   const int size = input_dims[0] * input_dims[1] * input_dims[2];
   for(int i = index; i < size; i += gridDim.x * blockDim.x)
-   output[index] = input[index];
+    output[i] = input[i];
 }
 
 template<typename T>
@@ -410,10 +410,9 @@ __global__ void KeTransposeDiagonalXandY(const T* __restrict__ input, Dim3 input
   static_assert(BlockDimX == TileX);
   static_assert(BlockDimX >= TileY);
   static_assert(BlockDimY <= TileY);
-  static_assert(TileY >= 32);
   static_assert(PadSize >= 0);
 
-  __shared__ T tile_sm[TileY][TileX + PadSize];
+  __shared__ __align__(alignof(T)) T tile_sm[TileY][TileX + PadSize];
 
   const int width = input_dims[2], height = input_dims[1];
 
@@ -452,13 +451,13 @@ __global__ void KeTransposeDiagonalXandY(const T* __restrict__ input, Dim3 input
   if(full_tile) {
 #pragma unroll
     for(int i = 0; i < TileY; i += BlockDimY) {
-      tile_sm[threadIdx.y + i][threadIdx.x] = input[ini + i * width];
+      tile_sm[threadIdx.y + i][threadIdx.x] = __ldg(&input[ini + i * width]);
     }
   } else {
     if(threadIdx.x < real_width && threadIdx.y < real_height) {
 #pragma unroll
       for(int i = 0; i < real_height; i += BlockDimY) {
-        tile_sm[threadIdx.y + i][threadIdx.x] = input[ini + i * width];
+        tile_sm[threadIdx.y + i][threadIdx.x] = __ldg(&input[ini + i * width]);
       }
     }
   }
@@ -495,7 +494,7 @@ float TimeOfDiagonalXandY(const T* input, Dim3 in_dims,
                  T* output, CUDAStream &context,
                  TimeOfKernel* clock) {
   constexpr int kTileX = 64;
-  constexpr int kTileY = 32;
+  constexpr int kTileY = 64;
   constexpr int kBlockDimX = 64;
   constexpr int kBlockDimY = 4;
   constexpr int kPaddingSize = 2;
@@ -601,4 +600,3 @@ int main() {
 
   return 0;
 }
-

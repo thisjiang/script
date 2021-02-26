@@ -212,7 +212,7 @@ template<typename T, int BlockDimX, int BlockDimY, int TileX, int TileY, int Pad
 __global__ void TilingSwapDim1And2Diagonal(const T* __restrict__ input, Dim3 input_dims,
                                    T* __restrict__ output) {
   static_assert(BlockDimX == TileX);
-  static_assert(TileY >= 32);
+  static_assert(BlockDimX >= TileY);
   static_assert(BlockDimY <= TileY);
   static_assert(PadSize >= 0);
 

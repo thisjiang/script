@@ -190,6 +190,5 @@ int main() {
 
   TestKernel<float, rank>(context, input_dims, pad_start, pad_end);
   TestKernel<half, rank>(context, input_dims, pad_start, pad_end);
-
   return 0;
 }

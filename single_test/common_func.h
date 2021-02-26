@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <vector>
+#include <string>
 #include <random>
 #include <array>
 #include <initializer_list>
@@ -10,15 +11,38 @@
 #include "cub/cub.cuh"
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include "cudnn.h"
 
 /***********************************************************/
 #define SUCCESS 0
 #define CUDA_FAILED -1
+#define CUDNN_FAILED -2
 #define CHECK_FAILED 1
+
+static inline const char* GetErrorString(const int status) {
+    switch(status) {
+        case SUCCESS: return "SUCCESS";
+        case CUDA_FAILED: return "Cuda ERROR";
+        case CUDNN_FAILED: return "Cudnn ERROR";
+        case CHECK_FAILED: return "Check Result ERROR";
+        default: return "Unsupported ERROR";
+    }
+    return "Unsupported ERROR";
+}
+
+/***********************************************************/
+typedef half float16;
+
+/***********************************************************/
+
+constexpr int MAX_BLOCK_DIM = 1024;
+constexpr int WARP_SIZE = 32;
+constexpr int HALF_WARP = WARP_SIZE / 2;
 
 /***********************************************************/
 
 #define HOSTDEVICE __forceinline__ __device__ __host__
+#define __CUDA_VERSION__ (__CUDACC_VER_MAJOR__ * 100 + __CUDACC_VER_MINOR__)
 
 /***********************************************************/
 
@@ -55,17 +79,9 @@ struct Dim3 : Array<size_t, 3, 1> {
     HOSTDEVICE Dim3() : Array<size_t, 3, 1>() {}
     HOSTDEVICE Dim3(size_t x) : Array<size_t, 3, 1>({x}) {}
     HOSTDEVICE Dim3(size_t x, size_t y) : Array<size_t, 3, 1>({x, y}) {}
-    HOSTDEVICE Dim3(size_t x, size_t y, size_t z) : Array<size_t, 3, 1>({x, y, z}) {}
+    HOSTDEVICE Dim3(size_t x, size_t y, size_t z)
+        : Array<size_t, 3, 1>({x, y, z}) {}
 };
-
-
-/***********************************************************/
-
-constexpr int MAX_BLOCK_DIM = 1024;
-constexpr int WARP_SIZE = 32;
-
-/***********************************************************/
-
 
 /***********************************************************/
 
@@ -107,23 +123,44 @@ inline void ConvertDevice(T1 *des, T2 *src, size_t num,
 
 /***********************************************************/
 template <typename T>
-__forceinline__ __device__ T KeWarpReduceSum(T val, unsigned lane_mask) {
-  for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1)
+__forceinline__ __device__ T warpReduceSum(T val, unsigned lane_mask) {
+#if (__CUDA_ARCH__ >= 800 && __CUDA_VERSION__ >= 1100)
+  val = __reduce_add_sync(lane_mask, val);
+#elif (__CUDA_ARCH__ >= 350 && __CUDA_VERSION__ >= 900)
+  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
     val += __shfl_xor_sync(lane_mask, val, mask, warpSize);
-  return val;
+#else
+  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
+    val += __shfl_xor(val, mask, warpSize);
+#endif
+  return val;   
 }
 
 template <typename T>
-__forceinline__ __device__ T KeWarpReduceMax(T val, unsigned lane_mask) {
-  for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1)
+__forceinline__ __device__ T warpReduceMax(T val, unsigned lane_mask) {
+#if (__CUDA_ARCH__ >= 800 && __CUDA_VERSION__ >= 1100)
+  val = __reduce_max_sync(lane_mask, val);
+#elif (__CUDA_ARCH__ >= 350 && __CUDA_VERSION__ >= 900)
+  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
     val = max(val, __shfl_xor_sync(lane_mask, val, mask, warpSize));
+#else
+  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
+    val = max(val, __shfl_xor(val, mask, warpSize));
+#endif
   return val;
 }
 
 template <typename T>
-__forceinline__ __device__ T KeWarpReduceMin(T val, unsigned lane_mask) {
-  for (int mask = WARP_SIZE / 2; mask > 0; mask >>= 1)
+__forceinline__ __device__ T warpReduceMin(T val, unsigned lane_mask) {
+#if (__CUDA_ARCH__ >= 800 && __CUDA_VERSION__ >= 1100)
+  val = __reduce_min_sync(lane_mask, val);
+#elif (__CUDA_ARCH__ >= 350 && __CUDA_VERSION__ >= 900)
+  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
     val = min(val, __shfl_xor_sync(lane_mask, val, mask, warpSize));
+#else
+  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
+    val = min(val, __shfl_xor(val, mask, warpSize));
+#endif
   return val;
 }
 
@@ -427,5 +464,51 @@ static HOSTDEVICE size_t GetSize(const T *dims, int n) {
     for(int i = 0; i < n; i ++) res *= dims[i];
     return res;
 }
+
+/***********************************************************/
+static inline const char* ToString(const dim3 &dims) {
+    std::string res = "[" + std::to_string(dims.x) + ", ";
+    res.append(std::to_string(dims.y) + ", ");
+    res.append(std::to_string(dims.z) + "]");
+    return res.c_str();
+}
+
+static inline const char* ToString(const Dim3 &dims) {
+    std::string res = "[" + std::to_string(dims[0]) + ", ";
+    res.append(std::to_string(dims[1]) + ", ");
+    res.append(std::to_string(dims[2]) + "]");
+    return res.c_str();
+}
+
+template<typename T>
+static inline const char* ToString(const std::vector<T> &dims) {
+    std::string res = "[";
+    for(auto d : dims) res.append(std::to_string(d) + ", ");
+    res.push_back(']');
+    return res.c_str();
+}
+
+template<typename T, size_t D>
+static inline const char* ToString(const std::array<T, D> &dims) {
+    std::string res = "[";
+    for(auto d : dims) res.append(std::to_string(d) + ", ");
+    res.push_back(']');
+    return res.c_str();
+}
+
+template<typename T>
+static inline const char* ToString(const T *dims, int n) {
+    std::string res = "[";
+    for(int i = 0; i < n; i ++) res.append(std::to_string(dims[i]) + ", ");
+    res.push_back(']');
+    return res.c_str();
+}
+
+/***********************************************************/
+
+template<typename T> inline cudnnDataType_t GetCudnnDataType(){return CUDNN_DATA_FLOAT;}
+template<> inline cudnnDataType_t GetCudnnDataType<float>() {return CUDNN_DATA_FLOAT;}
+template<> inline cudnnDataType_t GetCudnnDataType<half>() {return CUDNN_DATA_HALF;}
+template<> inline cudnnDataType_t GetCudnnDataType<double>() {return CUDNN_DATA_DOUBLE;}
 
 /***********************************************************/

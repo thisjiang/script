@@ -8,19 +8,26 @@
 
 #include "cuda_runtime.h"
 #include "cuda_fp16.h"
+#include "cudnn.h"
 
 #include "common_func.h"
 
+/************************************************************************/
 // CUDAStream
-class CUDAStream {
+class CUDAStream final {
 public:
     CUDAStream() {
         _stream = new cudaStream_t;
         cudaStreamCreate(_stream);
 
-        GetDeviceAttr();
+        _cudnn_handle = new cudnnHandle_t;
+        cudnnCreate(_cudnn_handle);
+        cudnnSetStream(*_cudnn_handle, *_stream);
+
+        if(_max_block_size == 0) GetDeviceAttr();
     }
     ~CUDAStream() {
+        cudnnDestroy(*_cudnn_handle);
         cudaStreamDestroy(*_stream);
     }
 
@@ -28,12 +35,24 @@ public:
     CUDAStream(const CUDAStream&&) = delete;
 
     inline cudaStream_t& stream() const {return *_stream;}
+    inline cudnnHandle_t& cudnn_handle() const {return *_cudnn_handle;}
 
     const char* sync() {
         cudaStreamSynchronize(*_stream);
         auto err = 	cudaGetLastError();
-        if(err != cudaSuccess) return cudaGetErrorString(err);
-        return "";
+        return GetError(err);
+    }
+
+    static inline const char* GetError(const int &status) {return GetErrorString(status);}
+
+    static inline const char* GetError(const cudaError_t &status) {
+        if(status == cudaSuccess) return "";
+        return cudaGetErrorString(status);
+    }
+
+    static inline const char* GetError(const cudnnStatus_t &status) {
+        if(status == CUDNN_STATUS_SUCCESS) return "";
+        return cudnnGetErrorString(status);
     }
 
     static inline int GetMaxThreadsPerBlock() {return _max_block_size;}
@@ -42,7 +61,7 @@ public:
     static inline int GetClockRate() {return _clock_rate;}
 
 private:
-    inline void GetDeviceAttr() {
+    static inline void GetDeviceAttr() {
         cudaDeviceGetAttribute(&_max_block_size, cudaDevAttrMaxThreadsPerBlock, 0);
         cudaDeviceGetAttribute(reinterpret_cast<int *>(&_max_grid_dim.x),
                                 cudaDevAttrMaxGridDimX, 0);
@@ -55,6 +74,7 @@ private:
     }
 
     cudaStream_t *_stream;
+    cudnnHandle_t *_cudnn_handle;
     static int _max_block_size;
     static dim3 _max_grid_dim;
     static int _max_shared_size;
@@ -66,8 +86,9 @@ dim3 CUDAStream::_max_grid_dim = 0;
 int CUDAStream::_max_shared_size = 0;
 int CUDAStream::_clock_rate = 0;
 
+/************************************************************************/
 // CUDA Event
-class TimeOfKernel {
+class TimeOfKernel final {
 private:
     TimeOfKernel() = default;
     TimeOfKernel(TimeOfKernel&) = delete;
@@ -116,7 +137,7 @@ cudaEvent_t* TimeOfKernel::_start = nullptr;
 cudaEvent_t* TimeOfKernel::_stop = nullptr;
 CUDAStream* TimeOfKernel::_stream = nullptr;
 
-
+/************************************************************************/
 // CUDA Malloc
 enum class Place {
     DEVICE, HOST
@@ -214,6 +235,7 @@ protected:
     Place _place;
 };
 
+/************************************************************************/
 class AllocHost : public BaseAlloc {
 public:
     AllocHost(size_t size, CUDAStream &context)
@@ -329,6 +351,7 @@ public:
     }
 };
 
+/************************************************************************/
 class AllocDevice: public BaseAlloc {
 public:
     AllocDevice(size_t size, CUDAStream &context)
@@ -464,6 +487,7 @@ public:
     }
 };
 
+/************************************************************************/
 template<typename T>
 class MallocHost : public AllocHost {
 public:
@@ -512,6 +536,7 @@ public:
     }
 };
 
+/************************************************************************/
 template<typename T>
 class MallocDevice : public AllocDevice {
 public:
