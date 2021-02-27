@@ -224,7 +224,7 @@ float TimeOfOld(const T* input, Dim3 in_dims,
 template<typename T, int BlockDimX, int BlockDimY, int TileDim, int PadSize>
 __global__ void KeTransposeCoalesced(const T* __restrict__ input, Dim3 input_dims,
                                    T* __restrict__ output) {
-  static_assert(BlockDimX == TileDim);
+  static_assert(BlockDimX == TileDim, "BlockDimX should equal to TileDim");
   __shared__ T tile_sm[TileDim][TileDim + PadSize];
 
   int width = input_dims[2], height = input_dims[1];
@@ -286,8 +286,8 @@ float TimeOfCoalesced(const T* input, Dim3 in_dims,
 template<typename T, int BlockDimX, int BlockDimY, int TileDim, int PadSize>
 __global__ void KeTransposeDiagonal(const T* __restrict__ input, Dim3 input_dims,
                                    T* __restrict__ output) {
-  static_assert(BlockDimX == TileDim);
-  static_assert(PadSize >= 0);
+  static_assert(BlockDimX == TileDim, "BlockDimX should equal to TileDim");
+  static_assert(PadSize >= 0, "PadSize should greater than 0");
   assert(BlockDimX == blockDim.x);
   assert(BlockDimY == blockDim.y);
 
@@ -407,10 +407,10 @@ float TimeOfDiagonal(const T* input, Dim3 in_dims,
 template<typename T, int BlockDimX, int BlockDimY, int TileX, int TileY, int PadSize>
 __global__ void KeTransposeDiagonalXandY(const T* __restrict__ input, Dim3 input_dims,
                                    T* __restrict__ output) {
-  static_assert(BlockDimX == TileX);
-  static_assert(BlockDimX >= TileY);
-  static_assert(BlockDimY <= TileY);
-  static_assert(PadSize >= 0);
+  static_assert(BlockDimX == TileX, "BlockDimX should equal to TileX");
+  static_assert(BlockDimX >= TileY, "BlockDimX should greater than TileY");
+  static_assert(BlockDimY <= TileY, "BlockDimY should less than TileY");
+  static_assert(PadSize >= 0, "PadSize should greater than 0");
 
   __shared__ __align__(alignof(T)) T tile_sm[TileY][TileX + PadSize];
 
@@ -548,7 +548,7 @@ int TestTranspose(CUDAStream &context, const Dim3& in_dims,
           base_time, old_time, new_time);
 
   auto err = context.sync();
-  if(err != "") {
+  if(err != EMPTY_STRING) {
     fprintf(stderr, "[%d, %d, %d] CUDA ERROR: %s\n",
                     in_dims[0], in_dims[1], in_dims[2], err);
     return CUDA_FAILED;

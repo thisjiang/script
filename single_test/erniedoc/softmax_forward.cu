@@ -10,6 +10,7 @@
 #include <vector>
 // Library file
 #include "../common.h"
+#include "../cudnn_helper.h"
 
 
 constexpr int LOOPNUM=100;
@@ -260,8 +261,9 @@ float TimeOfWarpSoftmax(CUDAStream &context, const DDim &dims, const int in_axis
 
 /************************************************************************/
 template<typename T>
-float TimeOfCudnnSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
-                       const T* in_data, T* out_data) {
+float TimeOfCudnnSoftmax(CUDAStream &context, CUDNNHandle &handle,
+                        const DDim &dims, const int in_axis,
+                        const T* in_data, T* out_data) {
   auto clock = TimeOfKernel::get(context);
 
   const int rank = dims.size();
@@ -285,19 +287,19 @@ float TimeOfCudnnSoftmax(CUDAStream &context, const DDim &dims, const int in_axi
   cudnnCreateTensorDescriptor(&desc_);
   cudnnSetTensorNdDescriptor(desc_, type, rank, dims.data(), strides.data());
 
-  auto handle = context.cudnn_handle();
+  auto cudnn_hd = handle.cudnn_handle();
   auto mode = axis == rank - 1 ? CUDNN_SOFTMAX_MODE_INSTANCE
                                 : CUDNN_SOFTMAX_MODE_CHANNEL;
   const T one = static_cast<T>(1), zero = static_cast<T>(0);
 
   clock->start();
   auto status = cudnnSoftmaxForward(
-      handle, CUDNN_SOFTMAX_ACCURATE, mode,
+      cudnn_hd, CUDNN_SOFTMAX_ACCURATE, mode,
       &one, desc_, in_data, &zero, desc_, out_data);
   float cost = clock->stop();
 
-  auto err = context.GetError(status);
-  if(err != "") {
+  auto err = handle.CheckError(status);
+  if(err != EMPTY_STRING) {
     fprintf(stderr, "%s Cudnn ERROR: %s\n",
             ToString(dims), err);
     return 0.0f;
@@ -308,7 +310,8 @@ float TimeOfCudnnSoftmax(CUDAStream &context, const DDim &dims, const int in_axi
 
 /************************************************************************/
 template<typename T>
-int TestSoftmax(CUDAStream &context, const DDim &dims, const int in_axis) {
+int TestSoftmax(CUDAStream &context, CUDNNHandle &handle,
+                const DDim &dims, const int in_axis) {
   const size_t num = GetSize(dims);
 
   MallocHost<T> input_h(num, context);
@@ -324,12 +327,12 @@ int TestSoftmax(CUDAStream &context, const DDim &dims, const int in_axis) {
 
   float cost_vec = TimeOfVecSoftmax(context, dims, in_axis, in_data, out_vec.data());
   float cost_warp = TimeOfWarpSoftmax(context, dims, in_axis, in_data, out_vec.data());
-  float cost_cudnn = TimeOfCudnnSoftmax(context, dims, in_axis, in_data, out_vec.data());
+  float cost_cudnn = TimeOfCudnnSoftmax(context, handle, dims, in_axis, in_data, out_vec.data());
 
   printf("Vec cost %f vs warp cost %f vs cudnn cost %f\n", cost_vec, cost_warp, cost_cudnn);
 
   auto err = context.sync();
-  if(err != "") {
+  if(err != EMPTY_STRING) {
     fprintf(stderr, "ERROR: %s\n", err);
     return CUDA_FAILED;
   }
@@ -341,12 +344,13 @@ int TestSoftmax(CUDAStream &context, const DDim &dims, const int in_axis) {
 
 int main() {
   CUDAStream context;
+  CUDNNHandle handle(context.stream());
 
   typedef float T;
   DDim dims = {512, 896, 4, 12};
   int in_axis = 1;
 
-  TestSoftmax<T>(context, dims, in_axis);
+  TestSoftmax<T>(context, handle, dims, in_axis);
 
   return 0;
 }

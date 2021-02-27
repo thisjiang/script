@@ -253,8 +253,8 @@ __global__ void NewTilingSwapDim1And2(const T* __restrict__ input, Dim3 input_di
 template<typename T, int BlockDimX, int BlockDimY, int TileDim, int PadSize>
 __global__ void NewTilingSwapDim1And2(const T* __restrict__ input, Dim3 input_dims,
                                    T* __restrict__ output) {
-  static_assert(BlockDimX == TileDim);
-  static_assert(PadSize >= 0);
+  static_assert(BlockDimX == TileDim, "BlockDimX shold equal to TileDim");
+  static_assert(PadSize >= 0, "PadSize should greater than 0");
   __shared__ T tile_sm[TileDim][TileDim + PadSize];
 
   const int width = input_dims[2], height = input_dims[1];
@@ -393,7 +393,7 @@ int TestTilingSwapDim1And2(CUDAStream &context, const Dim3 in_dims,
   printf("Old time %f vs New time %f\n", old_time, new_time);
 
   auto err = context.sync();
-  if(err != "") {
+  if(err != EMPTY_STRING) {
     fprintf(stderr, "[%d, %d, %d] CUDA ERROR: %s\n",
                     in_dims[0], in_dims[1], in_dims[2], err);
     return CUDA_FAILED;

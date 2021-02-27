@@ -163,8 +163,8 @@ int TestKernel(CUDAStream &context,
   printf("Eigen cost %f ms vs PaddingZero cost %f\n", eigen_cost, self_cost);
 
   auto err = context.sync();
-  if(err != "") {
-    fprintf(stderr, "ERROR: %s\n", err);
+  if(err != EMPTY_STRING) {
+    fprintf(stderr, "CUDA ERROR: %s\n", err);
     return CUDA_FAILED;
   }
 

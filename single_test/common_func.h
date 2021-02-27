@@ -1,3 +1,6 @@
+#ifndef SCRIPT_COMMON_FUNC_H
+#define SCRIPT_COMMON_FUNC_H
+
 #include "stdio.h"
 #include "time.h"
 
@@ -8,10 +11,9 @@
 #include <array>
 #include <initializer_list>
 
-#include "cub/cub.cuh"
+#include "cub/cub/cub.cuh"
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
-#include "cudnn.h"
 
 /***********************************************************/
 #define SUCCESS 0
@@ -30,18 +32,14 @@ static inline const char* GetErrorString(const int status) {
 }
 
 /***********************************************************/
+const char* EMPTY_STRING = "";
+
+/***********************************************************/
 typedef half float16;
 
 /***********************************************************/
 
-constexpr int MAX_BLOCK_DIM = 1024;
-constexpr int WARP_SIZE = 32;
-constexpr int HALF_WARP = WARP_SIZE / 2;
-
-/***********************************************************/
-
 #define HOSTDEVICE __forceinline__ __device__ __host__
-#define __CUDA_VERSION__ (__CUDACC_VER_MAJOR__ * 100 + __CUDACC_VER_MINOR__)
 
 /***********************************************************/
 
@@ -84,9 +82,9 @@ struct Dim3 : Array<size_t, 3, 1> {
 
 /***********************************************************/
 
-template<typename IN, typename OUT>
-HOSTDEVICE OUT type2type(IN val) {
-    return static_cast<OUT>(val);
+template<typename INTYPE, typename OUTTYPE>
+HOSTDEVICE OUTTYPE type2type(INTYPE val) {
+    return static_cast<OUTTYPE>(val);
 }
 template<>
 HOSTDEVICE float type2type<half, float>(half val) {
@@ -114,53 +112,10 @@ __global__ void KeConvert(T1 *des, T2 *src, size_t num) {
 
 template<typename T1, typename T2>
 inline void ConvertDevice(T1 *des, T2 *src, size_t num, 
-                          cudaStream_t &stream = 0) {
+                          cudaStream_t &stream) {
     int block = std::min(num, static_cast<size_t>(256));
     int gird = (num + block - 1) / block;
     KeConvert<<<gird, block, 0, stream>>>(des, src, num);
-}
-
-/***********************************************************/
-template <typename T>
-__forceinline__ __device__ T warpReduceSum(T val, unsigned lane_mask) {
-#if (__CUDA_ARCH__ >= 800 && __CUDA_VERSION__ >= 1100)
-  val = __reduce_add_sync(lane_mask, val);
-#elif (__CUDA_ARCH__ >= 350 && __CUDA_VERSION__ >= 900)
-  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
-    val += __shfl_xor_sync(lane_mask, val, mask, warpSize);
-#else
-  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
-    val += __shfl_xor(val, mask, warpSize);
-#endif
-  return val;   
-}
-
-template <typename T>
-__forceinline__ __device__ T warpReduceMax(T val, unsigned lane_mask) {
-#if (__CUDA_ARCH__ >= 800 && __CUDA_VERSION__ >= 1100)
-  val = __reduce_max_sync(lane_mask, val);
-#elif (__CUDA_ARCH__ >= 350 && __CUDA_VERSION__ >= 900)
-  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
-    val = max(val, __shfl_xor_sync(lane_mask, val, mask, warpSize));
-#else
-  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
-    val = max(val, __shfl_xor(val, mask, warpSize));
-#endif
-  return val;
-}
-
-template <typename T>
-__forceinline__ __device__ T warpReduceMin(T val, unsigned lane_mask) {
-#if (__CUDA_ARCH__ >= 800 && __CUDA_VERSION__ >= 1100)
-  val = __reduce_min_sync(lane_mask, val);
-#elif (__CUDA_ARCH__ >= 350 && __CUDA_VERSION__ >= 900)
-  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
-    val = min(val, __shfl_xor_sync(lane_mask, val, mask, warpSize));
-#else
-  for (int mask = HALF_WARP; mask > 0; mask >>= 1)
-    val = min(val, __shfl_xor(val, mask, warpSize));
-#endif
-  return val;
 }
 
 /***********************************************************/
@@ -289,7 +244,7 @@ PRINT_UINT(size_t)
   template<> void fprint<T>(T val) {fprintf(stderr, "%lld", type2type<T, int64_t>(val));}
 
 PRINT_LONG(int64_t)
-PRINT_LONG(long long)
+//PRINT_LONG(long long)
 #undef PRINT_LONG
 
 #define PRINT_FLOAT(T)                        \
@@ -403,7 +358,7 @@ void Random(T *data, size_t n) {
 RANDOM_INT(int)
 RANDOM_INT(unsigned)
 RANDOM_INT(int64_t)
-RANDOM_INT(int8_t)
+// RANDOM_INT(int8_t)
 #undef RANDOM_INT
 
 #define RANDOM_FLOAT(T)  \
@@ -505,9 +460,4 @@ static inline const char* ToString(const T *dims, int n) {
 
 /***********************************************************/
 
-template<typename T> inline cudnnDataType_t GetCudnnDataType(){return CUDNN_DATA_FLOAT;}
-template<> inline cudnnDataType_t GetCudnnDataType<float>() {return CUDNN_DATA_FLOAT;}
-template<> inline cudnnDataType_t GetCudnnDataType<half>() {return CUDNN_DATA_HALF;}
-template<> inline cudnnDataType_t GetCudnnDataType<double>() {return CUDNN_DATA_DOUBLE;}
-
-/***********************************************************/
+#endif // SCRIPT_COMMON_FUNC_H
