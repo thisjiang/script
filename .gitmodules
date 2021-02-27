@@ -1,0 +1,6 @@
+[submodule "single_test/cub"]
+	path = single_test/cub
+	url = https://github.com/NVIDIA/cub.git
+[submodule "single_test/eigen"]
+	path = single_test/eigen
+	url = https://gitlab.com/libeigen/eigen.git
