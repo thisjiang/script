@@ -28,10 +28,10 @@ private:
 };
 /***********************************************************/
 
-template<typename T> inline cudnnDataType_t GetCudnnDataType(){return CUDNN_DATA_FLOAT;}
-template<> inline cudnnDataType_t GetCudnnDataType<float>() {return CUDNN_DATA_FLOAT;}
-template<> inline cudnnDataType_t GetCudnnDataType<half>() {return CUDNN_DATA_HALF;}
-template<> inline cudnnDataType_t GetCudnnDataType<double>() {return CUDNN_DATA_DOUBLE;}
+template<typename T> inline constexpr cudnnDataType_t GetCudnnDataType(){return CUDNN_DATA_FLOAT;}
+template<> inline constexpr cudnnDataType_t GetCudnnDataType<float>() {return CUDNN_DATA_FLOAT;}
+template<> inline constexpr cudnnDataType_t GetCudnnDataType<half>() {return CUDNN_DATA_HALF;}
+template<> inline constexpr cudnnDataType_t GetCudnnDataType<double>() {return CUDNN_DATA_DOUBLE;}
 
 /***********************************************************/
 

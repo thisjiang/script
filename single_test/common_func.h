@@ -15,6 +15,8 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 
+#include "common_math.h"
+
 /***********************************************************/
 #define SUCCESS 0
 #define CUDA_FAILED -1
@@ -32,14 +34,8 @@ static inline const char* GetErrorString(const int status) {
 }
 
 /***********************************************************/
+
 const char* EMPTY_STRING = "";
-
-/***********************************************************/
-typedef half float16;
-
-/***********************************************************/
-
-#define HOSTDEVICE __forceinline__ __device__ __host__
 
 /***********************************************************/
 
@@ -81,82 +77,48 @@ struct Dim3 : Array<size_t, 3, 1> {
 };
 
 /***********************************************************/
-
-template<typename INTYPE, typename OUTTYPE>
-HOSTDEVICE OUTTYPE type2type(INTYPE val) {
-    return static_cast<OUTTYPE>(val);
-}
-template<>
-HOSTDEVICE float type2type<half, float>(half val) {
-    return __half2float(val);
-}
-template<>
-HOSTDEVICE half type2type<float, half>(float val) {
-    return __float2half(val);
-}
-
-template<typename T1, typename T2>
-inline void ConvertHost(T1 *des, T2 *src, size_t num) {
-    for(int i = 0; i < num; i ++) {
-        des[i] = type2type<T2, T1>(src[i]);
-    }
-}
-
-template<typename T1, typename T2>
-__global__ void KeConvert(T1 *des, T2 *src, size_t num) {
-    auto idx = threadIdx.x + blockIdx.x * blockDim.x;
-    for(int i = idx; i < num; i += blockDim.x * gridDim.x) {
-        des[i] = type2type<T2, T1>(src[i]);
-    }
-}
-
-template<typename T1, typename T2>
-inline void ConvertDevice(T1 *des, T2 *src, size_t num, 
-                          cudaStream_t &stream) {
-    int block = std::min(num, static_cast<size_t>(256));
-    int gird = (num + block - 1) / block;
-    KeConvert<<<gird, block, 0, stream>>>(des, src, num);
-}
-
-/***********************************************************/
 template<typename T>
 T MaxErrorHost(const T *a, const T *b, const size_t n) {
     T maxerr = 0.0, err = 0.0;
     for(int i = 0; i < n; i ++) {
-        err = a[i] - b[i];
-        if(err < 0) err = -err;
+        err = Abs(a[i] - b[i]);
         if(err > maxerr) maxerr = err;
     }
     return maxerr;
 }
 
-template<typename T, int BLOCKDIM = 256>
+template<typename T, int BLOCKDIM>
 __global__ void KeMaxError(const T *a, const T *b, const size_t n, 
                            T *block_max) {
   const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-
-  typedef cub::BlockReduce<T, BLOCKDIM> BlockReduce;
-  __shared__ typename BlockReduce::TempStorage cub_tmp;
+  const int tid_in_block = threadIdx.x;
+  __shared__ T s_data[BLOCKDIM];
 
   T max_err(0);
   for(int i = tid; i < n; i += blockDim.x * gridDim.x) {
-      T err = a[i] - b[i];
-      if(err < 0) err = - err;
-      err = BlockReduce(cub_tmp).Reduce(err, cub::Max());
-
-      if(tid == 0) if(err > max_err) max_err = err;
+      T err = Abs(a[i] - b[i]);
+      if(max_err < err) max_err = err;
   }
-  if(tid == 0) block_max[blockIdx.x] = max_err;
+  s_data[tid_in_block] = max_err;
+  __syncthreads();
+
+  for(int k = 0; k < BLOCKDIM; k ++) {
+      if(max_err < s_data[k]) max_err = s_data[k];
+  }
+
+  block_max[blockIdx.x] = max_err;
 }
 
-template<typename T>
-T MaxErrorDevice(const T *a, const T *b, const size_t n,
+template<typename T, int BLOCKDIM>
+T KeMaxErrorDevice(const T *a, const T *b, const size_t n,
                 cudaStream_t &stream) {
-    const int threads = 256;
+    const int threads = BLOCKDIM;
     const int grids = (n + threads - 1) / threads;
 
     T *block_max;
     cudaMalloc(&block_max, (grids + 1) * sizeof(T));
+    T *block_err;
+    cudaMallocHost(&block_err, (grids + 1) * sizeof(T));
 
     void *tmp_mem = nullptr;
     size_t tmp_size = 0;
@@ -165,20 +127,33 @@ T MaxErrorDevice(const T *a, const T *b, const size_t n,
     cudaMalloc(&tmp_mem, tmp_size);
 
     cudaMemsetAsync(block_max, 0, (grids + 1) * sizeof(T), stream);
-    KeMaxError<T, threads><<<grids, threads, 0, stream>>>
+    KeMaxError<T, BLOCKDIM><<<grids, threads, 0, stream>>>
                                 (a, b, n, block_max);
     cub::DeviceReduce::Max(tmp_mem, tmp_size, block_max, 
                            block_max + grids, grids, stream);
-
-    T max_err(0);
-    cudaMemcpyAsync(&max_err, block_max + grids, sizeof(T), 
+    
+    cudaMemcpyAsync(block_err, block_max, (grids + 1) * sizeof(T), 
                     cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
+    T max_err = block_err[grids];
 
     cudaFree(block_max); // implict sync
     cudaFree(tmp_mem);
+    cudaFreeHost(block_err);
 
     return max_err;
+}
+
+template<typename T>
+T MaxErrorDevice(const T *a, const T *b, const size_t n,
+                cudaStream_t &stream) {
+  if(n < 32) return KeMaxErrorDevice<T, 1>(a, b, n, stream);
+  else if(n < 64) return KeMaxErrorDevice<T, 32>(a, b, n, stream);
+  else if(n < 128) return KeMaxErrorDevice<T, 64>(a, b, n, stream);
+  else if(n < 256) return KeMaxErrorDevice<T, 128>(a, b, n, stream);
+  else if(n < 512) return KeMaxErrorDevice<T, 256>(a, b, n, stream);
+  else if(n < 1024) return KeMaxErrorDevice<T, 512>(a, b, n, stream);
+  else return KeMaxErrorDevice<T, 1024>(a, b, n, stream);
 }
 
 /***********************************************************/
@@ -252,10 +227,12 @@ PRINT_LONG(int64_t)
     template<> void fprint<T>(T val) {fprintf(stderr, "%f", type2type<T, float>(val));}
 
 PRINT_FLOAT(float)
-PRINT_FLOAT(half)
+PRINT_FLOAT(float16)
 PRINT_FLOAT(double)
 
 #undef PRINT_FLOAT
+
+template<> void print<dim3>(dim3 val) {printf("[%d, %d, %d]\n", val.x, val.y, val.z);}
 
 /***********************************************************/
 
@@ -378,14 +355,14 @@ RANDOM_FLOAT(double)
 #undef RANDOM_FLOAT
 
 template<>
-void Random<half>(half *data, size_t n, const half b, const half a) {
+void Random<float16>(float16 *data, size_t n, const float16 b, const float16 a) {
     std::default_random_engine seed(time(0));
     std::uniform_real_distribution<float> unirand(a, b);
-    for(int i = 0; i < n; i ++) data[i] = unirand(seed);
+    for(int i = 0; i < n; i ++) data[i] = type2type<float, float16>(unirand(seed));
 }
-template<> void Random<half>(half *data, size_t n) {
-    Random<half>(data, n, type2type<float, half>(1.0f), 
-                 type2type<float, half>(-1.0f));
+template<> void Random<float16>(float16 *data, size_t n) {
+    Random<float16>(data, n, type2type<float, float16>(1.0f), 
+                 type2type<float, float16>(-1.0f));
 }
 
 /***********************************************************/
@@ -420,42 +397,42 @@ static HOSTDEVICE size_t GetSize(const T *dims, int n) {
 }
 
 /***********************************************************/
-static inline const char* ToString(const dim3 &dims) {
+static inline const std::string ToString(const dim3 &dims) {
     std::string res = "[" + std::to_string(dims.x) + ", ";
     res.append(std::to_string(dims.y) + ", ");
     res.append(std::to_string(dims.z) + "]");
-    return res.c_str();
+    return res;
 }
 
-static inline const char* ToString(const Dim3 &dims) {
+static inline const std::string ToString(const Dim3 &dims) {
     std::string res = "[" + std::to_string(dims[0]) + ", ";
     res.append(std::to_string(dims[1]) + ", ");
     res.append(std::to_string(dims[2]) + "]");
-    return res.c_str();
+    return res;
 }
 
 template<typename T>
-static inline const char* ToString(const std::vector<T> &dims) {
+static inline const std::string ToString(const std::vector<T> &dims) {
     std::string res = "[";
     for(auto d : dims) res.append(std::to_string(d) + ", ");
     res.push_back(']');
-    return res.c_str();
+    return res;
 }
 
 template<typename T, size_t D>
-static inline const char* ToString(const std::array<T, D> &dims) {
+static inline const std::string ToString(const std::array<T, D> &dims) {
     std::string res = "[";
     for(auto d : dims) res.append(std::to_string(d) + ", ");
     res.push_back(']');
-    return res.c_str();
+    return res;
 }
 
 template<typename T>
-static inline const char* ToString(const T *dims, int n) {
+static inline const std::string ToString(const T *dims, int n) {
     std::string res = "[";
     for(int i = 0; i < n; i ++) res.append(std::to_string(dims[i]) + ", ");
     res.push_back(']');
-    return res.c_str();
+    return res;
 }
 
 /***********************************************************/

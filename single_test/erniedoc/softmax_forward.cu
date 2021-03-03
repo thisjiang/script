@@ -13,7 +13,7 @@
 #include "../cudnn_helper.h"
 
 
-constexpr int LOOPNUM=100;
+constexpr int LOOPNUM = 10;
 typedef std::vector<int> DDim;
 
 static inline int CanonicalAxis(const int axis, const int rank) {
@@ -39,12 +39,7 @@ static inline int SizeOutAxis(const int axis, DDim dims) {
   return size;
 }
 
-int log2_ceil(int value) {
-  int log2_value = 0;
-  while ((1 << log2_value) < value) ++log2_value;
-  return log2_value;
-}
-
+/************************************************************************/
 template <typename T, typename VECT, int VPT, int WARP_PER_BLOCK>
 __global__ void VecSoftmaxForward(T* dst, const T* src, const int batch_size,
                                   const int softmax_ele) {
@@ -58,7 +53,7 @@ __global__ void VecSoftmaxForward(T* dst, const T* src, const int batch_size,
   for (int i = 0; i < VPT; ++i) {
     val4p[i] = static_cast<float>(bufp[i]);
   }
-  float val = val4.x + val4.y + val4.z + val4.w;
+  // float val = val4.x + val4.y + val4.z + val4.w;
   float max_val = warpReduceMax<float>(
       max(max(val4.x, val4.y), max(val4.z, val4.w)), 0xffffffff);
   float4 tmp4 = make_float4(__expf(val4.x - max_val), __expf(val4.y - max_val),
@@ -74,7 +69,7 @@ __global__ void VecSoftmaxForward(T* dst, const T* src, const int batch_size,
 }
 
 template<typename T>
-float TimeOfVecSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
+float TimeOfOldVecSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
                        const T* in_data, T* out_data) {
   auto clock = TimeOfKernel::get(context);
 
@@ -86,16 +81,19 @@ float TimeOfVecSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
 
   constexpr int warps_per_block = 4;
   clock->start();
-  if (sizeof(T) == 2) {
-    VecSoftmaxForward<T, int2, 4, warps_per_block><<<
-        N / warps_per_block, warps_per_block * WARP_SIZE, 0,
-        context.stream()>>>(out_data, in_data, N, dim);
-  } else if (sizeof(T) == 4) {
-    VecSoftmaxForward<T, int4, 4, warps_per_block><<<
-        N / warps_per_block, warps_per_block * WARP_SIZE, 0,
-        context.stream()>>>(out_data, in_data, N, dim);
-  } else {
-    assert(false && "not support");
+#pragma unroll
+  for(int i = 0; i < LOOPNUM; i ++) {
+    if (sizeof(T) == 2) {
+      VecSoftmaxForward<T, int2, 4, warps_per_block><<<
+          N / warps_per_block, warps_per_block * WARP_SIZE, 0,
+          context.stream()>>>(out_data, in_data, N, dim);
+    } else if (sizeof(T) == 4) {
+      VecSoftmaxForward<T, int4, 4, warps_per_block><<<
+          N / warps_per_block, warps_per_block * WARP_SIZE, 0,
+          context.stream()>>>(out_data, in_data, N, dim);
+    } else {
+      assert(false && "not support");
+    }
   }
   float cost = clock->stop();
 
@@ -212,9 +210,14 @@ __global__ void WarpSoftmaxForward(T* dst, const T* src, const int batch_size,
         out_data, in_data, N, dim, dim);                      \
     break;
 
+int log2_ceil(int value) {
+  int log2_value = 0;
+  while ((1 << log2_value) < value) ++log2_value;
+  return log2_value;
+}
 
 template<typename T>
-float TimeOfWarpSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
+float TimeOfOldWarpSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
                        const T* in_data, T* out_data) {
   auto clock = TimeOfKernel::get(context);
 
@@ -240,19 +243,179 @@ float TimeOfWarpSoftmax(CUDAStream &context, const DDim &dims, const int in_axis
   dim3 threads(warp_size, warps_per_block, 1);
 
   clock->start();
-  switch (log2_elements) {
-    LAUNCH_SOFTMAX_WARP_FORWARD(0);  // 1
-    LAUNCH_SOFTMAX_WARP_FORWARD(1);  // 2
-    LAUNCH_SOFTMAX_WARP_FORWARD(2);  // 4
-    LAUNCH_SOFTMAX_WARP_FORWARD(3);  // 8
-    LAUNCH_SOFTMAX_WARP_FORWARD(4);  // 16
-    LAUNCH_SOFTMAX_WARP_FORWARD(5);  // 32
-    LAUNCH_SOFTMAX_WARP_FORWARD(6);  // 64
-    LAUNCH_SOFTMAX_WARP_FORWARD(7);  // 128
-    LAUNCH_SOFTMAX_WARP_FORWARD(8);  // 256
-    LAUNCH_SOFTMAX_WARP_FORWARD(9);  // 512
-    default:
-      break;
+#pragma unroll
+  for(int i = 0; i < LOOPNUM; i ++) {
+    switch (log2_elements) {
+      LAUNCH_SOFTMAX_WARP_FORWARD(0);  // 1
+      LAUNCH_SOFTMAX_WARP_FORWARD(1);  // 2
+      LAUNCH_SOFTMAX_WARP_FORWARD(2);  // 4
+      LAUNCH_SOFTMAX_WARP_FORWARD(3);  // 8
+      LAUNCH_SOFTMAX_WARP_FORWARD(4);  // 16
+      LAUNCH_SOFTMAX_WARP_FORWARD(5);  // 32
+      LAUNCH_SOFTMAX_WARP_FORWARD(6);  // 64
+      LAUNCH_SOFTMAX_WARP_FORWARD(7);  // 128
+      LAUNCH_SOFTMAX_WARP_FORWARD(8);  // 256
+      LAUNCH_SOFTMAX_WARP_FORWARD(9);  // 512
+      default:
+        break;
+    }
+  }
+  float cost = clock->stop();
+
+  return cost;
+}
+/************************************************************************/
+template <typename T>
+__inline__ __device__ T blockReduceMax(T val, unsigned mask) {
+  static __shared__ T shared[WARP_SIZE];
+  int lane = threadIdx.x & 0x1f;
+  int wid = threadIdx.x >> 5;
+
+  val = warpReduceMax(val, mask);
+
+  if (lane == 0) shared[wid] = val;
+
+  __syncthreads();
+
+  // align block_span to warpSize
+  int block_span = (blockDim.x + warpSize - 1) >> 5;
+  val = (lane < block_span) ? shared[lane] : -1e10f;
+  val = warpReduceMax(val, mask);
+
+  return val;
+}
+
+template <typename T>
+__inline__ __device__ T blockReduceSum(T val, unsigned mask) {
+  static __shared__ T shared[WARP_SIZE];
+  int lane = threadIdx.x & 0x1f;
+  int wid = threadIdx.x >> 5;
+
+  val = warpReduceSum<T>(val, mask);
+
+  if (lane == 0) shared[wid] = val;
+
+  __syncthreads();
+
+  // align block_span to warpSize
+  int block_span = (blockDim.x + warpSize - 1) >> 5;
+  val = (lane < block_span) ? shared[lane] : static_cast<T>(0.0f);
+  val = warpReduceSum<T>(val, mask);
+
+  return val;
+}
+
+template<typename T, typename AccT>
+__global__ void KeBlockSoftmaxForward(T *dst, const T *src, const int N,
+                                      const int dim, const int D) {
+  const int out_id = blockIdx.x / D;
+  const int in_id = blockIdx.x - out_id * D;
+  const int tid = threadIdx.x;
+  if(out_id >= N) return;
+
+  const int offset = out_id * dim * D + in_id;
+  const T *out_src = src + offset;
+  T *out_dst = dst + offset;
+
+  // compute max value
+  AccT max_val = -std::numeric_limits<AccT>::infinity();
+  for(int dim_id = tid; dim_id < dim; dim_id += blockDim.x)
+    max_val = max(max_val, static_cast<AccT>(out_src[dim_id * D]));
+  max_val = blockReduceMax(max_val, 0xffffffff);
+
+  // compute sum value
+  AccT sum_val(0);
+  for(int dim_id = tid; dim_id < dim; dim_id += blockDim.x)
+    sum_val += Exp(static_cast<AccT>(out_src[dim_id * D]) - max_val);
+  sum_val = blockReduceSum(sum_val, 0xffffffff);
+
+  // compute softmax result
+  for(int dim_id = tid; dim_id < dim; dim_id += blockDim.x)
+    out_dst[dim_id * D] =
+        static_cast<T>(Exp(static_cast<AccT>(out_src[dim_id * D]) - max_val)
+           / sum_val);
+}
+
+template<typename T>
+float TimeOfBlockSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
+                        const T* in_data, T* out_data) {
+  auto clock = TimeOfKernel::get(context);
+
+  const int rank = dims.size();
+  const int axis = CanonicalAxis(in_axis, rank);
+  const int dim = dims[axis];
+  const int N = SizeToAxis(axis, dims);
+  const int D = SizeOutAxis(axis, dims);
+
+  const int threads = std::min(dim, 256);
+  const int grids = N * D;
+
+  clock->start();
+#pragma unroll
+  for(int i = 0; i < LOOPNUM; i ++) {
+    KeBlockSoftmaxForward<T, float>
+      <<<grids, threads, 0, context.stream()>>>(
+      out_data, in_data, N, dim, D);
+  }
+  float cost = clock->stop();
+
+  return cost;
+}
+
+/************************************************************************/
+template<typename T, typename AccT>
+__global__ void KeWarpSoftmaxForward(T *dst, const T *src, const int N,
+                                      const int dim, const int D) {
+  const int out_id = blockIdx.x;
+  const int in_id = blockIdx.y * blockDim.y + threadIdx.y;
+  const int tid = threadIdx.x;
+
+  const int offset = out_id * dim * D + in_id;
+  const T *out_src = src + offset;
+  T *out_dst = dst + offset;
+
+  // compute max value
+  AccT max_val = -std::numeric_limits<AccT>::infinity();
+  for(int dim_id = tid; dim_id < dim; dim_id += blockDim.x)
+    max_val = max(max_val, static_cast<AccT>(out_src[dim_id * D]));
+  max_val = warpReduceMax(max_val, 0xffffffff);
+
+  // compute sum value
+  AccT sum_val(0);
+  for(int dim_id = tid; dim_id < dim; dim_id += blockDim.x)
+    sum_val += Exp(static_cast<AccT>(out_src[dim_id * D]) - max_val);
+  sum_val = warpReduceSum(sum_val, 0xffffffff);
+
+  // compute softmax result
+  for(int dim_id = tid; dim_id < dim; dim_id += blockDim.x)
+    out_dst[dim_id * D] =
+        static_cast<T>(Exp(static_cast<AccT>(out_src[dim_id * D]) - max_val)
+           / sum_val);
+}
+
+template<typename T>
+float TimeOfWarpSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
+                        const T* in_data, T* out_data) {
+  auto clock = TimeOfKernel::get(context);
+
+  const int rank = dims.size();
+  const int axis = CanonicalAxis(in_axis, rank);
+  const int dim = dims[axis];
+  const int N = SizeToAxis(axis, dims);
+  const int D = SizeOutAxis(axis, dims);
+
+  const int dim_b = std::min(32, dim);
+  const int inner_b = std::min(8, D);
+  const int inner_g = (D + inner_b - 1) / inner_b;
+  dim3 threads(dim_b, inner_b);
+  dim3 grids(N, inner_g);
+
+  clock->start();
+#pragma unroll
+  for(int i = 0; i < LOOPNUM; i ++) {
+    KeWarpSoftmaxForward<T, float>
+      <<<grids, threads, 0, context.stream()>>>(
+      out_data, in_data, N, dim, D);
   }
   float cost = clock->stop();
 
@@ -261,10 +424,10 @@ float TimeOfWarpSoftmax(CUDAStream &context, const DDim &dims, const int in_axis
 
 /************************************************************************/
 template<typename T>
-float TimeOfCudnnSoftmax(CUDAStream &context, CUDNNHandle &handle,
-                        const DDim &dims, const int in_axis,
+float TimeOfCudnnSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
                         const T* in_data, T* out_data) {
   auto clock = TimeOfKernel::get(context);
+  CUDNNHandle handle(context.stream());
 
   const int rank = dims.size();
   const int axis = CanonicalAxis(in_axis, rank);
@@ -291,17 +454,22 @@ float TimeOfCudnnSoftmax(CUDAStream &context, CUDNNHandle &handle,
   auto mode = axis == rank - 1 ? CUDNN_SOFTMAX_MODE_INSTANCE
                                 : CUDNN_SOFTMAX_MODE_CHANNEL;
   const T one = static_cast<T>(1), zero = static_cast<T>(0);
+  cudnnStatus_t status = CUDNN_STATUS_SUCCESS;
 
   clock->start();
-  auto status = cudnnSoftmaxForward(
-      cudnn_hd, CUDNN_SOFTMAX_ACCURATE, mode,
-      &one, desc_, in_data, &zero, desc_, out_data);
+#pragma unroll
+  for(int i = 0; i < LOOPNUM; i ++) {
+    status = cudnnSoftmaxForward(
+        cudnn_hd, CUDNN_SOFTMAX_ACCURATE, mode,
+        &one, desc_, in_data, &zero, desc_, out_data);
+  }
   float cost = clock->stop();
 
+  cudnnDestroyTensorDescriptor(desc_);
   auto err = handle.CheckError(status);
   if(err != EMPTY_STRING) {
     fprintf(stderr, "%s Cudnn ERROR: %s\n",
-            ToString(dims), err);
+            ToString(dims).c_str(), err);
     return 0.0f;
   }
 
@@ -309,48 +477,307 @@ float TimeOfCudnnSoftmax(CUDAStream &context, CUDNNHandle &handle,
 }
 
 /************************************************************************/
+// When D is larg and dim is small:
+// Each block arranged by N，each thread arranged by D
+// each thread compute dim number's softmax
+template<typename T, typename AccT>
+__global__ void KeLoopDimSoftmaxForward(T *dst, const T *src, const int N,
+                                      const int dim, const int D) {
+  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  const int out_id = tid / D;
+  if(out_id >= N) return;
+  const int in_id = tid - out_id * D;
+
+  const T *out_src = src + out_id * dim * D + in_id;
+  T *out_dst = dst + out_id * dim * D + in_id;
+  // compute max value
+  AccT max_val = -std::numeric_limits<AccT>::infinity();
+  for(int dim_id = 0; dim_id < dim; dim_id ++)
+    max_val = max(static_cast<AccT>(out_src[dim_id * D]), max_val);
+
+  // compute exponent value and sum value
+  AccT sum_val(0);
+  for(int dim_id = 0; dim_id < dim; dim_id ++)
+    sum_val += Exp(static_cast<AccT>(out_src[dim_id * D]) - max_val);
+
+  // compute softmax value
+  for(int dim_id = 0; dim_id < dim; dim_id ++)
+    out_dst[dim_id * D] =
+        static_cast<T>(Exp(static_cast<AccT>(out_src[dim_id * D]) - max_val) /
+        (sum_val + 1e-6f));
+}
+
 template<typename T>
-int TestSoftmax(CUDAStream &context, CUDNNHandle &handle,
-                const DDim &dims, const int in_axis) {
+float TimeOfLoopDimSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
+                        const T* in_data, T* out_data) {
+  auto clock = TimeOfKernel::get(context);
+
+  const int rank = dims.size();
+  const int axis = CanonicalAxis(in_axis, rank);
+  const int dim = dims[axis];
+  const int N = SizeToAxis(axis, dims);
+  const int D = SizeOutAxis(axis, dims);
+
+  int threads = std::min(N * D, 256);
+  int grids = (N * D + threads - 1) / threads;
+
+  clock->start();
+#pragma unroll
+  for(int i = 0; i < LOOPNUM; i ++) {
+    KeLoopDimSoftmaxForward<T, float><<<grids, threads, 0, context.stream()>>>(
+      out_data, in_data, N, dim, D);
+  }
+  float cost = clock->stop();
+
+  return cost;
+}
+
+/************************************************************************/
+// When D is small and (dim * D) is larger
+// Each block arranged by N，each thread arranged by dim * D
+// each block compute (dim * D) number's softmax
+template<typename T, typename AccT>
+__global__ void KeSpandDimDSoftmaxForward(T *dst, const T *src, const int N,
+                                      const int dim, const int D) {
+  extern __shared__ char s_mem[];
+  AccT* s_data = reinterpret_cast<AccT*>(s_mem);
+
+  const int tid = threadIdx.x;
+  const int BlockDim = blockDim.x;
+  for(int out_id = blockIdx.x; out_id < N; out_id += gridDim.x) {
+    const T *out_src = src + out_id * dim * D;
+    T *out_dst = dst + out_id * dim * D;
+
+    // Compute each thread's max value
+    AccT max_val = -std::numeric_limits<AccT>::infinity();
+    for(int id = tid; id < dim * D; id += BlockDim)
+      max_val = max(static_cast<AccT>(out_src[id]), max_val);
+    // write to shared memory
+    s_data[tid] = max_val;
+    __syncthreads();
+    // compute total max value
+    for(int id = tid % D; id < BlockDim; id += D)
+      max_val = max(s_data[id], max_val);
+
+    // Compute each thread's sum value
+    AccT sum_val(0);
+    for(int id = tid; id < dim * D; id += BlockDim)
+      sum_val += Exp(static_cast<AccT>(out_src[id]) - max_val);
+    // write to shared memory
+    s_data[tid] = sum_val;
+    __syncthreads();
+    // compute total sum value
+    sum_val = 0;
+    for(int id = tid % D; id < BlockDim; id += D)
+      sum_val += s_data[id];
+
+    // Compute finally softmax result
+    for(int id = tid; id < dim * D; id += BlockDim)
+      out_dst[id] = static_cast<T>(Exp(static_cast<AccT>(out_src[id]) - max_val) /
+                      (sum_val + 1e-6f));
+  }
+}
+
+template<typename T>
+float TimeOfSpandDimDSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
+                        const T* in_data, T* out_data) {
+  auto clock = TimeOfKernel::get(context);
+
+  const int rank = dims.size();
+  const int axis = CanonicalAxis(in_axis, rank);
+  const int dim = dims[axis];
+  const int N = SizeToAxis(axis, dims);
+  const int D = SizeOutAxis(axis, dims);
+
+  if(D > 1024) return 0.0f;
+
+  const int grids = N;
+  const int threads = D * (1024 / D);
+
+  clock->start();
+#pragma unroll
+  for(int i = 0; i < LOOPNUM; i ++) {
+    KeSpandDimDSoftmaxForward<T, float>
+      <<<grids, threads, threads * sizeof(float), context.stream()>>>(
+      out_data, in_data, N, dim, D);
+  }
+  float cost = clock->stop();
+
+  return cost;
+}
+
+/************************************************************************/
+
+
+/************************************************************************/
+template<typename T>
+float TimeOfNewSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
+                        const T* in_data, T* out_data) {
+  auto clock = TimeOfKernel::get(context);
+
+  const int rank = dims.size();
+  const int axis = CanonicalAxis(in_axis, rank);
+  const int dim = dims[axis];
+  const int N = SizeToAxis(axis, dims);
+  const int D = SizeOutAxis(axis, dims);
+
+
+  constexpr bool AccT_use_float =
+        std::is_same<T, float>::value ||
+        std::is_same<T, half>::value;
+  bool optimize = false;
+
+  clock->start();
+#pragma unroll
+  for(int i = 0; i < LOOPNUM; i ++)
+  if(D <= 512 && D < dim) {
+    if(i == 0) printf("[TimeOfNewSoftmax] Using KeSpandDimDSoftmaxForward\n");
+    optimize = true;
+    const int grids = N;
+    const int threads = D * (512 / D);
+
+    if(AccT_use_float) {
+      KeSpandDimDSoftmaxForward<T, float>
+        <<<grids, threads, threads * sizeof(float),
+          context.stream()>>>(
+        out_data, in_data, N, dim, D);
+    } else {
+      KeSpandDimDSoftmaxForward<T, double>
+        <<<grids, threads, threads * sizeof(double),
+          context.stream()>>>(
+        out_data, in_data, N, dim, D);
+    }
+  } else if(dim < 1024) {
+    if(i == 0) printf("[TimeOfNewSoftmax] Using KeLoopDimSoftmaxForward\n");
+    optimize = true;
+    int threads = std::min(N * D, 256);
+    int grids = (N * D + threads - 1) / threads;
+
+    if(AccT_use_float) {
+      KeLoopDimSoftmaxForward<T, float><<<grids, threads, 0,
+        context.stream()>>>(
+        out_data, in_data, N, dim, D);
+    } else {
+      KeLoopDimSoftmaxForward<T, double><<<grids, threads, 0,
+        context.stream()>>>(
+        out_data, in_data, N, dim, D);
+    }
+  }
+  float cost = clock->stop();
+
+  return cost;
+}
+/************************************************************************/
+template<typename T>
+int TestSoftmax(CUDAStream &context, const DDim &dims, const int in_axis) {
   const size_t num = GetSize(dims);
 
   MallocHost<T> input_h(num, context);
   MallocDevice<T> input(num, context);
+
+  MallocDevice<T> out_cudnn(num, context);
+  /*
   MallocDevice<T> out_vec(num, context);
   MallocDevice<T> out_warp(num, context);
-  MallocDevice<T> out_cudnn(num, context);
+  */
+  MallocDevice<T> out_inner(num, context);
+  MallocDevice<T> out_DimD(num, context);
+  // MallocDevice<T> out_block(num, context);
+  // MallocDevice<T> out_warp(num, context);
+  MallocDevice<T> out_new(num, context);
 
   input_h.Random(static_cast<T>(-10), static_cast<T>(10));
   input.CopyFrom(input_h);
 
   T* in_data = input.data();
 
-  float cost_vec = TimeOfVecSoftmax(context, dims, in_axis, in_data, out_vec.data());
-  float cost_warp = TimeOfWarpSoftmax(context, dims, in_axis, in_data, out_vec.data());
-  float cost_cudnn = TimeOfCudnnSoftmax(context, handle, dims, in_axis, in_data, out_vec.data());
+  std::vector<std::string> methods;
+  std::vector<float> costs;
 
-  printf("Vec cost %f vs warp cost %f vs cudnn cost %f\n", cost_vec, cost_warp, cost_cudnn);
+  float cost_cudnn = TimeOfCudnnSoftmax(context, dims, in_axis, in_data, out_cudnn.data());
+  printf("cudnn cost %f\n", cost_cudnn);
+  methods.push_back("Cudnn");
+  costs.push_back(cost_cudnn);
+  /*
+  // Vec和warp版本都只支持(axis == -1)，否则计算结果不正确
+  float cost_vec = TimeOfOldVecSoftmax(context, dims, in_axis, in_data, out_vec.data());
+  printf("Old vec cost %f\n", cost_vec);
+
+  float cost_warp = TimeOfOldWarpSoftmax(context, dims, in_axis, in_data, out_warp.data());
+  printf("Old warp cost %f\n", cost_warp);
+  */
+  float cost_inner = TimeOfLoopDimSoftmax(context, dims, in_axis, in_data, out_inner.data());
+  printf("LoopDim cost %f\n", cost_inner);
+  methods.push_back("LoopDim");
+  costs.push_back(cost_inner);
+
+  float cost_DimD = TimeOfSpandDimDSoftmax(context, dims, in_axis, in_data, out_DimD.data());
+  printf("SpandDimD cost %f\n", cost_DimD);
+  methods.push_back("SpandDimD");
+  costs.push_back(cost_DimD);
+  /*
+  float cost_block = TimeOfBlockSoftmax(context, dims, in_axis, in_data, out_block.data());
+  printf("Block cost %f\n", cost_block);
+  methods.push_back("Block");
+  costs.push_back(cost_block);
+
+  float cost_warp = TimeOfWarpSoftmax(context, dims, in_axis, in_data, out_warp.data());
+  printf("Warp cost %f\n", cost_warp);
+  methods.push_back("Warp");
+  costs.push_back(cost_warp);
+  */
+
+  float cost_new = TimeOfNewSoftmax(context, dims, in_axis, in_data, out_new.data());
+  printf("New cost %f\n", cost_new);
 
   auto err = context.sync();
   if(err != EMPTY_STRING) {
-    fprintf(stderr, "ERROR: %s\n", err);
+    fprintf(stderr, "CUDA ERROR: %s\n", err);
     return CUDA_FAILED;
   }
+  /*
+  T vec_err = out_cudnn.MaxError(out_vec);
+  std::cout<< "Vec Error: " << vec_err << std::endl;
+  T warp_err = out_cudnn.MaxError(out_warp);
+  std::cout<< "Warp Error: " << warp_err << std::endl;
+  T inner_err = out_cudnn.MaxError(out_inner);
+  std::cout<< "LoopDim Error: " << type2type<T, float>(inner_err) << std::endl;
+  T DimD_err = out_cudnn.MaxError(out_DimD);
+  std::cout<< "SpandDimD Error: " << type2type<T, float>(DimD_err) << std::endl;
+  T block_err = out_cudnn.MaxError(out_block);
+  std::cout<< "Block Error: " << type2type<T, float>(block_err) << std::endl;
+  T warp_err = out_cudnn.MaxError(out_warp);
+  std::cout<< "Warp Error: " << type2type<T, float>(warp_err) << std::endl;
+  T new_err = out_cudnn.MaxError(out_new);
+  std::cout<< "New Error: " << type2type<T, float>(new_err) << std::endl;
+  */
 
+  int min_idex = 0;
+  for(int i = 1; i < costs.size(); i ++) {
+    if(costs[i] != 0 && costs[i] < costs[min_idex]) min_idex = i;
+  }
+  printf("%s %s faster, which cost %f ms\n",
+          ToString(dims).c_str(), methods[min_idex].c_str(),
+          costs[min_idex]);
   return SUCCESS;
 }
 
 /************************************************************************/
 
 int main() {
+  srand(time(0));
   CUDAStream context;
-  CUDNNHandle handle(context.stream());
-
   typedef float T;
-  DDim dims = {512, 896, 4, 12};
-  int in_axis = 1;
-
-  TestSoftmax<T>(context, handle, dims, in_axis);
+  do {
+    DDim dims = {512, 896, 48};
+    // dims[0] = rand() % 1000;
+    // dims[1] = rand() % 1000;
+    // dims[2] = rand() % 1000;
+    int in_axis = 1;
+    printf("%s\n", ToString(dims).c_str());
+    if(TestSoftmax<T>(context, dims, in_axis) != SUCCESS) break;
+    printf("\n");
+  } while(false);
 
   return 0;
 }

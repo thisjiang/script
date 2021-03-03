@@ -7,6 +7,10 @@
 /************************************************************************/
 #define __CUDA_VERSION__ (__CUDACC_VER_MAJOR__ * 100 + __CUDACC_VER_MINOR__)
 
+#if defined(__CUDACC__) && !defined(__CUDA_ARCH__)
+#define __CUDA_ARCH__ 800
+#endif
+
 constexpr int MAX_BLOCK_DIM = 1024;
 constexpr int WARP_SIZE = 32;
 constexpr int HALF_WARP = WARP_SIZE / 2;
