@@ -265,8 +265,9 @@ float TimeOfCudnnSoftmax(CUDAStream &context, const DDim &dims, const int in_axi
 // Each block arranged by N，each thread arranged by D
 // each thread compute dim number's softmax
 template<typename T, typename AccT>
-__global__ void KeLoopDimSoftmaxBackward(T *dx, const T *out, const T *dout,
-                        const int N, const int dim, const int D) {
+__global__ void KeLoopDimSoftmaxBackward(T* __restrict__ dx,
+                const T* __restrict__ out, const T* __restrict__ dout,
+                const int N, const int dim, const int D) {
   const int tid = blockIdx.x * blockDim.x + threadIdx.x;
   const int out_id = tid / D;
   if(out_id >= N) return;
@@ -278,9 +279,10 @@ __global__ void KeLoopDimSoftmaxBackward(T *dx, const T *out, const T *dout,
 
   // compute multiply then sum value
   AccT sum_val(0);
-  for(int dim_id = 0; dim_id < dim; dim_id ++)
+  for(int dim_id = 0; dim_id < dim; dim_id ++) {
     sum_val += static_cast<AccT>(src_out[dim_id * D]) *
                static_cast<AccT>(src_dout[dim_id * D]);
+  }
 
   // compute softmax gradient value
   for(int dim_id = 0; dim_id < dim; dim_id ++)
@@ -322,8 +324,9 @@ float TimeOfLoopDimSoftmax(CUDAStream &context, const DDim &dims, const int in_a
 // Each block arranged by N，each thread arranged by dim * D
 // each block compute (dim * D) number's softmax
 template<typename T, typename AccT>
-__global__ void KeSpandDimDSoftmaxBackward(T *dx, const T *out, const T *dout,
-                        const int N, const int dim, const int D) {
+__global__ void KeSpandDimDSoftmaxBackward(T* __restrict__ dx,
+                const T* __restrict__ out, const T* __restrict__ dout,
+                const int N, const int dim, const int D) {
   extern __shared__ char s_mem[];
   AccT* s_data = reinterpret_cast<AccT*>(s_mem);
 
@@ -526,14 +529,14 @@ int main() {
   typedef float T;
   do {
     DDim dims = {512, 896, 48};
-    dims[0] = rand() % 1024 + 1;
-    dims[1] = rand() % 1024 + 1;
-    dims[2] = rand() % 1024 + 1;
+    // dims[0] = rand() % 1024 + 1;
+    // dims[1] = rand() % 1024 + 1;
+    // dims[2] = rand() % 1024 + 1;
     int in_axis = 1;
     printf("%s\n", ToString(dims).c_str());
     if(TestSoftmax<T>(context, dims, in_axis) != SUCCESS) break;
     printf("\n");
-  } while(true);
+  } while(false);
 
   return 0;
 }

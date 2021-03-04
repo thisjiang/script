@@ -31,11 +31,15 @@ out_th = torch.nn.functional.softmax(th_x, dim=axis)
 th_res = out_th.cpu().numpy()
 
 # check result
-if (np.max(np.abs(pd_res - tf_res)) > 1e-4):
+tf_err = np.max(np.abs(pd_res - tf_res))
+print("Paddle diff Tensorflow: {}".format(tf_err))
+if (tf_err > 1e-4):
   print("Tensorflow Compare ERROR")
   quit()
 
-if (np.max(np.abs(pd_res - th_res)) > 1e-4):
+th_err = np.max(np.abs(pd_res - th_res))
+print("Paddle diff Pytorch: {}".format(th_err))
+if (th_err > 1e-4):
   print("Pytorch Compare ERROR")
   quit()
 
@@ -72,7 +76,7 @@ for i in range(loopNum):
 pd_res = out_pd.numpy()
 t2 = time.time()
 time_paddle = t2 - t1
-print("paddle: " + str(time_paddle) + " ms")
+print("paddle cost: " + str(time_paddle) + " s")
 
 t1 = time.time()
 for i in range(loopNum):
@@ -80,7 +84,7 @@ for i in range(loopNum):
 tf_res = out_tf.numpy()
 t2 = time.time()
 time_tf = t2 - t1
-print("tensorflow: " + str(time_tf) + " ms")
+print("tensorflow cost: " + str(time_tf) + " s")
 
 t1 = time.time()
 for i in range(loopNum):
@@ -88,4 +92,4 @@ for i in range(loopNum):
 th_res = out_th.cpu().numpy()
 t2 = time.time()
 time_torch = t2 - t1
-print("pytorch: " + str(time_torch) + " ms")
+print("pytorch cost: " + str(time_torch) + " s")

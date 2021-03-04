@@ -201,17 +201,22 @@ public:
     void Print(int row, int col) const override {
         ::Print<T>(this->ptr<T>(), row, col);
     }
-
     template<typename T>
     void Print(int num, int row, int col) const override {
         ::Print<T>(this->ptr<T>(), num, row, col);
     }
-
+    template<typename T>
+    void Print(const dim3 &dims) const override {
+        ::Print<T>(this->ptr<T>(), dims);
+    }
     template<typename T>
     void Print(const Dim3 &dims) const override {
         ::Print<T>(this->ptr<T>(), dims);
     }
-
+    template<typename T>
+    void Print(const std::vector<int> &dims) const override {
+        ::Print(this->ptr<T>(), dims);
+    }
     template<typename T, size_t D>
     void Print(const std::array<int, D> &dims) const override {
         ::Print(this->ptr<T>(), dims);
@@ -221,7 +226,6 @@ public:
     void Random() {
         ::Random<T>(this->ptr<T>(), this->_size / sizeof(T));
     }
-
     template<typename T>
     void Random(T a, T b) {
         ::Random<T>(this->ptr<T>(), this->_size / sizeof(T), b, a);
@@ -313,55 +317,46 @@ public:
         this->_size = new_size;
     }
 
+#define MACRO_COPYTOTMP                         \
+    AllocHost tmp(this->_size, this->_context); \
+    this->CopyTo(tmp);                          \
+    const char *err = this->_context.sync();    \
+    if(err != "") {                             \
+        fprintf(stderr, "%s\n", err);           \
+        return;                                 \
+    }
+ 
     template<typename T>
     void Print(int row, int col) const override {
-        AllocHost tmp(this->_size, this->_context);
-        this->CopyTo(tmp);
-        const char *err = this->_context.sync();
-        if(err != "") {
-            fprintf(stderr, "%s\n", err);
-            return;
-        }
-
+        MACRO_COPYTOTMP
         ::Print<T>(tmp.ptr<T>(), row, col);
     }
-
     template<typename T>
     void Print(int num, int row, int col) const override {
-        AllocHost tmp(this->_size, this->_context);
-        this->CopyTo(tmp);
-        const char *err = this->_context.sync();
-        if(err != "") {
-            fprintf(stderr, "%s\n", err);
-            return;
-        }
-
+        MACRO_COPYTOTMP
         ::Print<T>(tmp.ptr<T>(), num, row, col);
     }
-
     template<typename T>
-    void Print(const Dim3 &dims) const override {
-        AllocHost tmp(this->_size, this->_context);
-        this->CopyTo(tmp);
-        const char *err = this->_context.sync();
-        if(err != "") {
-            fprintf(stderr, "%s\n", err);
-            return;
-        }
+    void Print(const dim3 &dims) const override {
+        MACRO_COPYTOTMP
         ::Print<T>(tmp.ptr<T>(), dims);
     }
-
-    template<typename T, size_t D>
-    void Print(const std::array<int, D> &dims) const override {
-        AllocHost tmp(this->_size, this->_context);
-        this->CopyTo(tmp);
-        const char *err = this->_context.sync();
-        if(err != "") {
-            fprintf(stderr, "%s\n", err);
-            return;
-        }
+    template<typename T>
+    void Print(const Dim3 &dims) const override {
+        MACRO_COPYTOTMP
+        ::Print<T>(tmp.ptr<T>(), dims);
+    }
+    template<typename T>
+    void Print(const std::vector<int> &dims) const override {
+        MACRO_COPYTOTMP
         ::Print(tmp.ptr<T>(), dims);
     }
+    template<typename T, size_t D>
+    void Print(const std::array<int, D> &dims) const override {
+        MACRO_COPYTOTMP
+        ::Print(tmp.ptr<T>(), dims);
+    }
+#undef MACRO_COPYTOTMP
 };
 
 /************************************************************************/
@@ -380,9 +375,11 @@ public:
 
     void Print(int row, int col) const {AllocHost::Print<T>(row, col);}
     void Print(int num, int row, int col) const {AllocHost::Print<T>(num, row, col);}
+    void Print(const dim3 &dims) const {AllocDevice::Print<T>(dims);}
     void Print(const Dim3 &dims) const {AllocHost::Print<T>(dims);}
     template<size_t D>
     void Print(const std::array<int, D> &dims) const {AllocHost::Print<T, D>(dims);}
+    void Print(const std::vector<int> &dims) const {AllocHost::Print<T>(dims);}
 
     template<typename T2>
     int CastFrom(MallocHost<T2> &src) {
@@ -407,7 +404,6 @@ public:
     void Random() {
         AllocHost::Random<T>();
     }
-
     void Random(T a, T b) {
         AllocHost::Random<T>(a, b);
     }
@@ -428,9 +424,11 @@ public:
 
     void Print(int row, int col) const {AllocDevice::Print<T>(row, col);}
     void Print(int num, int row, int col) const {AllocDevice::Print<T>(num, row, col);}
+    void Print(const dim3 &dims) const {AllocDevice::Print<T>(dims);}
     void Print(const Dim3 &dims) const {AllocDevice::Print<T>(dims);}
     template<size_t D>
     void Print(const std::array<int, D> &dims) const {AllocDevice::Print<T, D>(dims);}
+    void Print(const std::vector<int> &dims) const {AllocDevice::Print<T>(dims);}
 
     template<typename T2>
     int CastFrom(MallocDevice<T2> &src) {

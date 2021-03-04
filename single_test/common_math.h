@@ -6,6 +6,9 @@
 #include "cuda_runtime.h"
 #include "cuda_fp16.h"
 
+#include <vector>
+#include <array>
+
 /***********************************************************/
 
 #define HOSTDEVICE __forceinline__ __device__ __host__
@@ -13,6 +16,47 @@
 /***********************************************************/
 
 typedef half float16;
+
+/***********************************************************/
+
+template <typename T, int Size, T DefaultValue>
+struct __align__(sizeof(T)) Array {
+    HOSTDEVICE const T& operator[](int index) const {
+        return data[index];
+    }
+    HOSTDEVICE T& operator[](int index) {
+        return data[index];
+    }
+
+    HOSTDEVICE Array() {
+#pragma unroll
+        for(int i = 0; i < Size; i ++) data[i] = DefaultValue;
+    }
+
+    HOSTDEVICE Array(const std::initializer_list<T> &arr) {
+        int i = 0;
+        for(T value : arr) data[i ++] = value;
+#pragma unroll
+        for(; i < Size; i ++) data[i] = DefaultValue;
+    }
+
+    HOSTDEVICE Array(const Array &arr) {
+#pragma unroll
+        for(int i = 0; i < Size; i ++) data[i] = arr.data[i];
+    }
+
+    T data[Size];
+};
+
+struct Dim3 : Array<size_t, 3, 1> {
+    HOSTDEVICE Dim3() : Array<size_t, 3, 1>() {}
+    HOSTDEVICE Dim3(size_t x) : Array<size_t, 3, 1>({x}) {}
+    HOSTDEVICE Dim3(size_t x, size_t y) : Array<size_t, 3, 1>({x, y}) {}
+    HOSTDEVICE Dim3(size_t x, size_t y, size_t z)
+        : Array<size_t, 3, 1>({x, y, z}) {}
+};
+
+typedef std::vector<int> DDim;
 
 /***********************************************************/
 
@@ -38,6 +82,36 @@ __forceinline__ __device__ float Exp<float>(const float val) {
 template<>
 __forceinline__ __device__ half Exp<half>(const half val) {
   return hexp(val);
+}
+
+/***********************************************************/
+static HOSTDEVICE size_t GetSize(const dim3 &dims) {
+    return dims.x * dims.y * dims.z;
+}
+
+static HOSTDEVICE size_t GetSize(const Dim3 &dims) {
+    return dims[0] * dims[1] * dims[2];
+}
+
+template<typename T>
+static inline size_t GetSize(const std::vector<T> &dims) {
+    size_t res = 1;
+    for(auto d : dims) res *= d;
+    return res;
+}
+
+template<typename T, size_t D>
+static inline size_t GetSize(const std::array<T, D> &dims) {
+    size_t res = 1;
+    for(auto d : dims) res *= d;
+    return res;
+}
+
+template<typename T>
+static HOSTDEVICE size_t GetSize(const T *dims, int n) {
+    size_t res = 1;
+    for(int i = 0; i < n; i ++) res *= dims[i];
+    return res;
 }
 
 /***********************************************************/

@@ -8,7 +8,6 @@
 #include <vector>
 #include <string>
 #include <random>
-#include <array>
 #include <initializer_list>
 
 #include "cub/cub/cub.cuh"
@@ -36,45 +35,6 @@ static inline const char* GetErrorString(const int status) {
 /***********************************************************/
 
 const char* EMPTY_STRING = "";
-
-/***********************************************************/
-
-template <typename T, int Size, T DefaultValue>
-struct __align__(sizeof(T)) Array {
-    HOSTDEVICE const T& operator[](int index) const {
-        return data[index];
-    }
-    HOSTDEVICE T& operator[](int index) {
-        return data[index];
-    }
-
-    HOSTDEVICE Array() {
-#pragma unroll
-        for(int i = 0; i < Size; i ++) data[i] = DefaultValue;
-    }
-
-    HOSTDEVICE Array(const std::initializer_list<T> &arr) {
-        int i = 0;
-        for(T value : arr) data[i ++] = value;
-#pragma unroll
-        for(; i < Size; i ++) data[i] = DefaultValue;
-    }
-
-    HOSTDEVICE Array(const Array &arr) {
-#pragma unroll
-        for(int i = 0; i < Size; i ++) data[i] = arr.data[i];
-    }
-
-    T data[Size];
-};
-
-struct Dim3 : Array<size_t, 3, 1> {
-    HOSTDEVICE Dim3() : Array<size_t, 3, 1>() {}
-    HOSTDEVICE Dim3(size_t x) : Array<size_t, 3, 1>({x}) {}
-    HOSTDEVICE Dim3(size_t x, size_t y) : Array<size_t, 3, 1>({x, y}) {}
-    HOSTDEVICE Dim3(size_t x, size_t y, size_t z)
-        : Array<size_t, 3, 1>({x, y, z}) {}
-};
 
 /***********************************************************/
 template<typename T>
@@ -190,49 +150,91 @@ bool CheckSameDevice(const T *a, const T *b, size_t n,
     return err_h == 0;
 }
 
+/***********************************************************/
+
+static inline const std::string ToString(const dim3 &dims) {
+    std::string res = "[" + std::to_string(dims.x) + ", ";
+    res.append(std::to_string(dims.y) + ", ");
+    res.append(std::to_string(dims.z) + "]");
+    return res;
+}
+
+static inline const std::string ToString(const Dim3 &dims) {
+    std::string res = "[" + std::to_string(dims[0]) + ", ";
+    res.append(std::to_string(dims[1]) + ", ");
+    res.append(std::to_string(dims[2]) + "]");
+    return res;
+}
+
+template<typename T>
+static inline const std::string ToString(const std::vector<T> &dims) {
+    std::string res = "[";
+    for(auto d : dims) res.append(std::to_string(d) + ", ");
+    res.push_back(']');
+    return res;
+}
+
+template<typename T, size_t D>
+static inline const std::string ToString(const std::array<T, D> &dims) {
+    std::string res = "[";
+    for(auto d : dims) res.append(std::to_string(d) + ", ");
+    res.push_back(']');
+    return res;
+}
+
+template<typename T>
+static inline const std::string ToString(const T *dims, int n) {
+    std::string res = "[";
+    for(int i = 0; i < n; i ++) res.append(std::to_string(dims[i]) + ", ");
+    res.push_back(']');
+    return res;
+}
 
 /***********************************************************/
-template<typename T> void print(T val) {}
-template<typename T> void fprint(T val) {}
+template<typename T> void print(const T &val, const char *end = "") {}
+template<typename T> void fprint(const T &val, const char *end = "") {}
 
+#define PRINT_ARGS(T, FORMAT, VAL)  \
+    template<> void print<T>(const T &val, const char *end) {  \
+        printf(FORMAT, VAL);    \
+        printf(end);    \
+    }   \
+    template<> void fprint<T>(const T &val, const char *end) {   \
+    fprintf(stderr, FORMAT, VAL);    \
+    fprintf(stderr, end); \
+  }
 
-#define PRINT_INT(T)                        \
-  template<> void print<T>(T val) {printf("%d", type2type<T, int>(val));} \
-  template<> void fprint<T>(T val) {fprintf(stderr, "%d", type2type<T, int>(val));}
-
+#define PRINT_INT(T) PRINT_ARGS(T, "%d", (type2type<T, int>(val)))
 PRINT_INT(int)
 PRINT_INT(int8_t)
 PRINT_INT(bool)
-
 #undef PRINT_INT
 
-#define PRINT_UINT(T)                        \
-  template<> void print<T>(T val) {printf("%u", type2type<T, int>(val));} \
-  template<> void fprint<T>(T val) {fprintf(stderr, "%u", type2type<T, int>(val));}
-
+#define PRINT_UINT(T) PRINT_ARGS(T, "%u", (type2type<T, unsigned int>(val)))
 PRINT_UINT(unsigned int)
-PRINT_UINT(size_t)
 #undef PRINT_UINT
 
-#define PRINT_LONG(T)                        \
-  template<> void print<T>(T val) {printf("%lld", type2type<T, int64_t>(val));} \
-  template<> void fprint<T>(T val) {fprintf(stderr, "%lld", type2type<T, int64_t>(val));}
-
+#define PRINT_LONG(T) PRINT_ARGS(T, "%lld", (type2type<T, int64_t>(val)))
 PRINT_LONG(int64_t)
-//PRINT_LONG(long long)
 #undef PRINT_LONG
 
-#define PRINT_FLOAT(T)                        \
-    template<> void print<T>(T val) {printf("%f", type2type<T, float>(val));} \
-    template<> void fprint<T>(T val) {fprintf(stderr, "%f", type2type<T, float>(val));}
-
+#define PRINT_FLOAT(T) PRINT_ARGS(T, "%f", (type2type<T, float>(val)))
 PRINT_FLOAT(float)
 PRINT_FLOAT(float16)
 PRINT_FLOAT(double)
-
 #undef PRINT_FLOAT
 
-template<> void print<dim3>(dim3 val) {printf("[%d, %d, %d]\n", val.x, val.y, val.z);}
+PRINT_ARGS(size_t, "zd", val)
+
+#define PRINT_STRING(T) PRINT_ARGS(T, "%s", (ToString(val).c_str()))
+PRINT_STRING(dim3)
+PRINT_STRING(Dim3)
+PRINT_STRING(std::vector<int>)
+PRINT_STRING(std::vector<unsigned>)
+PRINT_STRING(std::vector<size_t>)
+#undef PRINT_STRING
+
+#undef PRINT_ARGS
 
 /***********************************************************/
 
@@ -265,12 +267,18 @@ void Print(const T *data, const int num, const int row, const int col) {
 }
 
 template<typename T>
+void Print(const T *data, const dim3 &dims) {
+    Print(data, dims.x, dims.y, dims.z);
+}
+
+template<typename T>
 void Print(const T *data, const Dim3 &dims) {
     Print(data, dims[0], dims[1], dims[2]);
 }
 
-template<typename T, size_t D>
-void Print(const T *data, const std::array<int, D> &dims) {
+template<typename T>
+void Print(const T *data, const std::vector<int> &dims) {
+    const int D = dims.size();
     if(D == 1) {
         Print(data, 1, dims[0]);
         return;
@@ -282,11 +290,9 @@ void Print(const T *data, const std::array<int, D> &dims) {
         return;
     }
 
-    printf("[");
-    for(auto num : dims) printf(" %d,", num);
-    printf("]\n");
+    print(dims, "\n");
 
-    std::array<int, D> stride;
+    std::vector<int> stride(D, 1);
     stride[D - 1] = 1;
     for(int i = D - 2; i >= 0; i --)
         stride[i] = dims[i + 1] * stride[i + 1];
@@ -303,6 +309,11 @@ void Print(const T *data, const std::array<int, D> &dims) {
         print(data[i]);
         printf(" ");
     }
+}
+
+template<typename T, size_t D>
+void Print(const T *data, const std::array<int, D> &dims) {
+    Print(data, std::vector<int>(dims.begin(), dims.end()));
 }
 
 
@@ -363,76 +374,6 @@ void Random<float16>(float16 *data, size_t n, const float16 b, const float16 a) 
 template<> void Random<float16>(float16 *data, size_t n) {
     Random<float16>(data, n, type2type<float, float16>(1.0f), 
                  type2type<float, float16>(-1.0f));
-}
-
-/***********************************************************/
-
-static HOSTDEVICE size_t GetSize(const dim3 &dims) {
-    return dims.x * dims.y * dims.z;
-}
-
-static HOSTDEVICE size_t GetSize(const Dim3 &dims) {
-    return static_cast<size_t>(dims[0] * dims[1] * dims[2]);
-}
-
-template<typename T>
-static inline size_t GetSize(const std::vector<T> &dims) {
-    size_t res = 1;
-    for(auto d : dims) res *= d;
-    return res;
-}
-
-template<typename T, size_t D>
-static inline size_t GetSize(const std::array<T, D> &dims) {
-    size_t res = 1;
-    for(auto d : dims) res *= d;
-    return res;
-}
-
-template<typename T>
-static HOSTDEVICE size_t GetSize(const T *dims, int n) {
-    size_t res = 1;
-    for(int i = 0; i < n; i ++) res *= dims[i];
-    return res;
-}
-
-/***********************************************************/
-static inline const std::string ToString(const dim3 &dims) {
-    std::string res = "[" + std::to_string(dims.x) + ", ";
-    res.append(std::to_string(dims.y) + ", ");
-    res.append(std::to_string(dims.z) + "]");
-    return res;
-}
-
-static inline const std::string ToString(const Dim3 &dims) {
-    std::string res = "[" + std::to_string(dims[0]) + ", ";
-    res.append(std::to_string(dims[1]) + ", ");
-    res.append(std::to_string(dims[2]) + "]");
-    return res;
-}
-
-template<typename T>
-static inline const std::string ToString(const std::vector<T> &dims) {
-    std::string res = "[";
-    for(auto d : dims) res.append(std::to_string(d) + ", ");
-    res.push_back(']');
-    return res;
-}
-
-template<typename T, size_t D>
-static inline const std::string ToString(const std::array<T, D> &dims) {
-    std::string res = "[";
-    for(auto d : dims) res.append(std::to_string(d) + ", ");
-    res.push_back(']');
-    return res;
-}
-
-template<typename T>
-static inline const std::string ToString(const T *dims, int n) {
-    std::string res = "[";
-    for(int i = 0; i < n; i ++) res.append(std::to_string(dims[i]) + ", ");
-    res.push_back(']');
-    return res;
 }
 
 /***********************************************************/
