@@ -14,6 +14,7 @@ public:
 
   ~CUDNNHandle() {
     cudnnDestroy(*_cudnn_handle);
+    delete _cudnn_handle;
   }
 
   inline cudnnHandle_t& cudnn_handle() const {return *_cudnn_handle;}

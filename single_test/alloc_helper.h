@@ -124,7 +124,6 @@ public:
     virtual ~AllocHost() {
         cudaFreeHost(this->_ptr);
         _size = 0;
-        _stream = 0;
         _ptr = nullptr;
     }
 
@@ -244,7 +243,6 @@ public:
     virtual ~AllocDevice() {
         cudaFree(this->_ptr);
         _size = 0;
-        _stream = 0;
         _ptr = nullptr;
     }
 

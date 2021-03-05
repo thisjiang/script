@@ -27,6 +27,7 @@ public:
     }
     ~CUDAStream() {
         cudaStreamDestroy(*_stream);
+        delete _stream;
     }
 
     CUDAStream(const CUDAStream&) = delete;
