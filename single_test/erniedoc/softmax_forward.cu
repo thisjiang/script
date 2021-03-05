@@ -1233,17 +1233,20 @@ int main() {
   CUDAStream context;
   typedef float T;
   do {
-    DDim dims = {512, 896, 12};
-    // DDim dims = {10240, 320};
-    dims[0] = rand() % 1000 + 1;
-    dims[1] = rand() % 8192 + 1;
-    dims[2] = rand() % 2048;
-    int in_axis = rand() % 3;
+    DDim dims = {512, 896, 48};
+    int in_axis = -1;
+    printf("Please Input Dim [x, y, z]:\n");
+    std::cin >> dims[0] >> dims[1] >> dims[2];
+    printf("Please Input axis\n");
+    std::cin >> in_axis;
+    // dims[0] = rand() % 1000 + 1;
+    // dims[1] = rand() % 8192 + 1;
+    // dims[2] = rand() % 2048;
     print(dims);
     printf(", axis = %d\n", in_axis);
     if(TestSoftmax<T>(context, dims, in_axis) != SUCCESS) break;
     printf("\n");
-  } while(true);
+  } while(false);
 
   return 0;
 }
