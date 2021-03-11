@@ -46,6 +46,7 @@ public:
     static inline const dim3& GetCUDAMaxGridDimSize() {return _max_grid_dim;}
     static inline int GetMaxSharedSize() {return _max_shared_size;} 
     static inline int GetClockRate() {return _clock_rate;}
+    static inline int GetSMCount() {return _sm_count;}
 
 private:
     static inline void GetDeviceAttr() {
@@ -58,6 +59,7 @@ private:
                                 cudaDevAttrMaxGridDimZ, 0);
         cudaDeviceGetAttribute(&_max_shared_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
         cudaDeviceGetAttribute(&_clock_rate, cudaDevAttrClockRate, 0);
+        cudaDeviceGetAttribute(&_sm_count, cudaDevAttrMultiProcessorCount, 0);
     }
 
     cudaStream_t *_stream;
@@ -65,12 +67,14 @@ private:
     static dim3 _max_grid_dim;
     static int _max_shared_size;
     static int _clock_rate;
+    static int _sm_count;
 };
 
 int CUDAStream::_max_block_size = 0;
 dim3 CUDAStream::_max_grid_dim = 0;
 int CUDAStream::_max_shared_size = 0;
 int CUDAStream::_clock_rate = 0;
+int CUDAStream::_sm_count = 0;
 
 /************************************************************************/
 // CUDA Event
@@ -163,6 +167,68 @@ __forceinline__ __device__ T warpReduceMin(T val, unsigned lane_mask) {
   for (int mask = HALF_WARP; mask > 0; mask >>= 1)
     val = min(val, __shfl_xor(val, mask, warpSize));
 #endif
+  return val;
+}
+
+/***********************************************************/
+
+template <typename T>
+__inline__ __device__ T blockReduceSum(T val, unsigned mask) {
+  static __shared__ T shared[WARP_SIZE];
+  int lane = threadIdx.x & 0x1f;
+  int wid = threadIdx.x >> 5;
+
+  val = warpReduceSum<T>(val, mask);
+
+  if (lane == 0) shared[wid] = val;
+
+  __syncthreads();
+
+  // align block_span to warpSize
+  int block_span = (blockDim.x + warpSize - 1) >> 5;
+  val = (lane < block_span) ? shared[lane] : static_cast<T>(0.0f);
+  val = warpReduceSum<T>(val, mask);
+
+  return val;
+}
+
+template <typename T>
+__inline__ __device__ T blockReduceMax(T val, unsigned mask) {
+  static __shared__ T shared[WARP_SIZE];
+  int lane = threadIdx.x & 0x1f;
+  int wid = threadIdx.x >> 5;
+
+  val = warpReduceMax(val, mask);
+
+  if (lane == 0) shared[wid] = val;
+
+  __syncthreads();
+
+  // align block_span to warpSize
+  int block_span = (blockDim.x + warpSize - 1) >> 5;
+  val = (lane < block_span) ? shared[lane] : -1e10f;
+  val = warpReduceMax(val, mask);
+
+  return val;
+}
+
+template <typename T>
+__inline__ __device__ T blockReduceMin(T val, unsigned mask) {
+  static __shared__ T shared[WARP_SIZE];
+  int lane = threadIdx.x & 0x1f;
+  int wid = threadIdx.x >> 5;
+
+  val = warpReduceMin(val, mask);
+
+  if (lane == 0) shared[wid] = val;
+
+  __syncthreads();
+
+  // align block_span to warpSize
+  int block_span = (blockDim.x + warpSize - 1) >> 5;
+  val = (lane < block_span) ? shared[lane] : -1e10f;
+  val = warpReduceMin(val, mask);
+
   return val;
 }
 

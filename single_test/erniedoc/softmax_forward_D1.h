@@ -260,15 +260,16 @@ __global__ void NoVec_KeD1WarpSoftmaxForward(T* dst,
   #pragma unroll
     for(int col = 0; col < COLS; col ++) {
       int dst_col =  tid + col * WARP_SIZE;
-      if(tid + col * WARP_SIZE >= dim) break;
+      if(dst_col >= dim) break;
       dst_row[dst_col] = static_cast<T>(buf[col] / sum_val);
     }
   }
 }
 
+template<typename T> struct GetAccType {using type = T;};
+template<> struct GetAccType<half> {using type = float;};
 
 template<typename T, int N> struct GetVecType;
-
 template<typename T> struct GetVecType<T, 1> {using type = T;};
 template<> struct GetVecType<half, 2> {using type = half2;};
 template<> struct GetVecType<half, 4> {using type = float2;};
@@ -277,6 +278,10 @@ template<> struct GetVecType<float, 4> {using type = float4;};
 template<> struct GetVecType<double, 2> {using type = double2;};
 template<> struct GetVecType<double, 4> {using type = double4;};
 
+/*****************************************************************/
+// when D == 1 && 320 <= dim <= 1024, using KeD1WarpSoftmaxForward faster,
+// each warp compute one row's element,
+// each thread compute COLS element of dim and store in register
 template<typename T, typename AccT, int COLS, int VECSIZE>
 __global__ void KeD1WarpSoftmaxForward(T* __restrict__ dst,
             const T* __restrict__ src,const int N, const int dim) {
@@ -340,26 +345,27 @@ __global__ void KeD1WarpSoftmaxForward(T* __restrict__ dst,
 }
 
 template<typename T, int COLS, int VECSIZE>
-void LaunchD1WarpSoftmax(CUDAStream &context, const T* in_data, T* out_data,
-                        const int N, const int dim) {
+inline void LaunchD1WarpSoftmaxForwardKernel(cudaStream_t &stream,
+          const T* in_data, T* out_data, const int N, const int dim) {
   int N_b = std::min(8, N);
   dim3 threads(WARP_SIZE, N_b);
   int grids = (N + N_b - 1) / N_b;
+  using AccT = typename GetAccType<T>::type;
 
-  KeD1WarpSoftmaxForward<T, float, COLS, VECSIZE>
-    <<<grids, threads, 0, context.stream()>>>(
+  KeD1WarpSoftmaxForward<T, AccT, COLS, VECSIZE>
+    <<<grids, threads, 0, stream>>>(
       out_data, in_data, N, dim);
 }
 
-#define LAUNCH_D1WARP_COLS(COLS)                     \
-  case COLS:                                         \
-    LaunchD1WarpSoftmax<T, COLS, VECSIZE>(           \
-            context, in_data, out_data, N, dim);     \
+#define LAUNCH_D1WARP_COLS(COLS)                          \
+  case COLS:                                              \
+    LaunchD1WarpSoftmaxForwardKernel<T, COLS, VECSIZE>(   \
+            stream, in_data, out_data, N, dim);           \
     break;
 
 template<typename T, int VECSIZE>
-typename std::enable_if<VECSIZE == 1, void>::type DispatchD1WarpSoftmax(
-                        CUDAStream &context, const T* in_data, T* out_data,
+typename std::enable_if<VECSIZE == 1, void>::type DispatchD1WarpSoftmaxForward(
+                        cudaStream_t &stream, const T* in_data, T* out_data,
                         const int N, const int dim, const int cols_per_thread) {
   switch (cols_per_thread) {
     LAUNCH_D1WARP_COLS(1)
@@ -395,16 +401,13 @@ typename std::enable_if<VECSIZE == 1, void>::type DispatchD1WarpSoftmax(
     LAUNCH_D1WARP_COLS(31)
     LAUNCH_D1WARP_COLS(32)
     default:
-      fprintf(stderr, "[DispatchD1WarpSoftmax::VECSIZE==1] "
-                      "BAD PARAM (%d, %d) with %d\n",
-              N, dim, cols_per_thread);
       break;
   }
 }
 
 template<typename T, int VECSIZE>
-typename std::enable_if<VECSIZE == 2, void>::type DispatchD1WarpSoftmax(
-                        CUDAStream &context, const T* in_data, T* out_data,
+typename std::enable_if<VECSIZE == 2, void>::type DispatchD1WarpSoftmaxForward(
+                        cudaStream_t &stream, const T* in_data, T* out_data,
                         const int N, const int dim, const int cols_per_thread) {
   switch (cols_per_thread) {
     LAUNCH_D1WARP_COLS(2)
@@ -424,16 +427,13 @@ typename std::enable_if<VECSIZE == 2, void>::type DispatchD1WarpSoftmax(
     LAUNCH_D1WARP_COLS(30)
     LAUNCH_D1WARP_COLS(32)
     default:
-      fprintf(stderr, "[DispatchD1WarpSoftmax::VECSIZE==2] "
-                      "BAD PARAM (%d, %d) with %d\n",
-              N, dim, cols_per_thread);
       break;
   }
 }
 
 template<typename T, int VECSIZE>
-typename std::enable_if<VECSIZE == 4, void>::type DispatchD1WarpSoftmax(
-                        CUDAStream &context, const T* in_data, T* out_data,
+typename std::enable_if<VECSIZE == 4, void>::type DispatchD1WarpSoftmaxForward(
+                        cudaStream_t &stream, const T* in_data, T* out_data,
                         const int N, const int dim, const int cols_per_thread) {
   switch (cols_per_thread) {
     LAUNCH_D1WARP_COLS(4)
@@ -445,54 +445,29 @@ typename std::enable_if<VECSIZE == 4, void>::type DispatchD1WarpSoftmax(
     LAUNCH_D1WARP_COLS(28)
     LAUNCH_D1WARP_COLS(32)
     default:
-      fprintf(stderr, "[DispatchD1WarpSoftmax::VECSIZE==4] "
-                      "BAD PARAM (%d, %d) with %d\n",
-              N, dim, cols_per_thread);
       break;
   }
 }
 #undef LAUNCH_D1WARP_COLS
 
+template<typename T>
+inline void LaunchD1WarpSoftmaxForward(cudaStream_t &stream, const T* in_data,
+                      T* out_data, const int N, const int dim) {
+  const int cols_per_thread = (dim + WARP_SIZE - 1) / WARP_SIZE;
+
+  if(dim % 4 == 0 && cols_per_thread % 4 == 0) {
+    DispatchD1WarpSoftmaxForward<T, 4>(
+      stream, in_data, out_data, N, dim, cols_per_thread);
+  } else if(dim % 2 == 0 && cols_per_thread % 2 == 0) {
+    DispatchD1WarpSoftmaxForward<T, 2>(
+      stream, in_data, out_data, N, dim, cols_per_thread);
+  } else {
+    DispatchD1WarpSoftmaxForward<T, 1>(
+      stream, in_data, out_data, N, dim, cols_per_thread);
+  }
+}
+
 /************************************************************************/
-template <typename T>
-__inline__ __device__ T blockReduceMax(T val, unsigned mask) {
-  static __shared__ T shared[WARP_SIZE];
-  int lane = threadIdx.x & 0x1f;
-  int wid = threadIdx.x >> 5;
-
-  val = warpReduceMax(val, mask);
-
-  if (lane == 0) shared[wid] = val;
-
-  __syncthreads();
-
-  // align block_span to warpSize
-  int block_span = (blockDim.x + warpSize - 1) >> 5;
-  val = (lane < block_span) ? shared[lane] : -1e10f;
-  val = warpReduceMax(val, mask);
-
-  return val;
-}
-
-template <typename T>
-__inline__ __device__ T blockReduceSum(T val, unsigned mask) {
-  static __shared__ T shared[WARP_SIZE];
-  int lane = threadIdx.x & 0x1f;
-  int wid = threadIdx.x >> 5;
-
-  val = warpReduceSum<T>(val, mask);
-
-  if (lane == 0) shared[wid] = val;
-
-  __syncthreads();
-
-  // align block_span to warpSize
-  int block_span = (blockDim.x + warpSize - 1) >> 5;
-  val = (lane < block_span) ? shared[lane] : static_cast<T>(0.0f);
-  val = warpReduceSum<T>(val, mask);
-
-  return val;
-}
 
 template<typename T, typename AccT>
 __global__ void NoVec_KeD1BlockSharedSoftmaxForward(T* __restrict__ dst,
@@ -529,6 +504,9 @@ __global__ void NoVec_KeD1BlockSharedSoftmaxForward(T* __restrict__ dst,
   }
 }
 
+// when D == 1 && 1024 < dim <= 4096, using KeD1BlockSharedSoftmaxForward,
+// each block compute a row, and synchronization by blockReduce,
+// each thread compute VECSIZE elements of dim, and store in shared memory
 template<typename T, typename AccT, int VECSIZE>
 __global__ void KeD1BlockSharedSoftmaxForward(T* __restrict__ dst,
             const T* __restrict__ src,const int N, const int dim) {
@@ -536,11 +514,12 @@ __global__ void KeD1BlockSharedSoftmaxForward(T* __restrict__ dst,
   AccT* s_data = reinterpret_cast<AccT*>(s_mem);
 
   const int tid = threadIdx.x;
-
+  // vectorization for global memory coalescing
   using VecT = typename GetVecType<T, VECSIZE>::type;
-  VecT vec;// vectorization for global memory coalescing
+  VecT vec;
+  T* buf_src = reinterpret_cast<T*>(&vec);
 
-  for(int row = blockIdx.x; row < N; row += blockDim.x) {
+  for(int row = blockIdx.x; row < N; row += gridDim.x) {
     const int offset = row * dim;
     const T* __restrict__ src_row = src + offset;
     T* __restrict__ dst_row = dst + offset;
@@ -549,7 +528,6 @@ __global__ void KeD1BlockSharedSoftmaxForward(T* __restrict__ dst,
     AccT max_val = -std::numeric_limits<AccT>::infinity();
     for(int col = tid * VECSIZE; col < dim; col += blockDim.x * VECSIZE) {
       vec = reinterpret_cast<const VecT*>(&src_row[col])[0];
-      T* buf_src = reinterpret_cast<T*>(&vec);
       AccT* buf_s = s_data + col;
 #pragma unroll
       for(int i = 0; i < VECSIZE; i ++) {
@@ -580,14 +558,30 @@ __global__ void KeD1BlockSharedSoftmaxForward(T* __restrict__ dst,
 }
 
 template<typename T, int VECSIZE>
-void LaunchD1BlockSharedSoftmax(CUDAStream &context, const T* in_data, T* out_data,
-                        const int N, const int dim) {
-  const int threads = std::min(dim, 1024);
+inline void LaunchD1BlockSharedSoftmaxForwardKernel(cudaStream_t &stream,
+                const T* in_data, T* out_data, const int N, const int dim) {
+  const int threads = std::min(dim, 256);
   const int grids = N;
+  using AccT = typename GetAccType<T>::type;
 
-  KeD1BlockSharedSoftmaxForward<T, float, VECSIZE>
-    <<<grids, threads, dim * sizeof(float), context.stream()>>>(
+  KeD1BlockSharedSoftmaxForward<T, AccT, VECSIZE>
+    <<<grids, threads, dim * sizeof(AccT), stream>>>(
     out_data, in_data, N, dim);
+}
+
+template<typename T>
+inline void LaunchD1BlockSharedSoftmaxForward(cudaStream_t &stream, const T* in_data,
+                        T* out_data, const int N, const int dim) {
+  if(dim % 4 == 0) {
+    LaunchD1BlockSharedSoftmaxForwardKernel<T, 4>(
+      stream, in_data, out_data, N, dim);
+  } else if(dim % 2 == 0) {
+    LaunchD1BlockSharedSoftmaxForwardKernel<T, 2>(
+      stream, in_data, out_data, N, dim);
+  } else {
+    LaunchD1BlockSharedSoftmaxForwardKernel<T, 1>(
+      stream, in_data, out_data, N, dim);
+  }
 }
 
 /************************************************************************/
@@ -622,6 +616,9 @@ __global__ void NoVec_KeD1BlockSoftmaxForward(T* __restrict__ dst,
   }
 }
 
+// when D == 1 && 4096 < dim, using KeD1BlockSoftmaxForward,
+// each block compute a row, and synchronization by blockReduce,
+// each thread compute VECSIZE elements of dim
 template<typename T, typename AccT, int VECSIZE>
 __global__ void KeD1BlockSoftmaxForward(T* __restrict__ dst,
             const T* __restrict__ src,const int N, const int dim) {
@@ -632,7 +629,7 @@ __global__ void KeD1BlockSoftmaxForward(T* __restrict__ dst,
   T* buf_src = reinterpret_cast<T*>(&vec_src);
   T* buf_dst = reinterpret_cast<T*>(&vec_dst);
 
-  for(int row = blockIdx.x; row < N; row += blockDim.x) {
+  for(int row = blockIdx.x; row < N; row += gridDim.x) {
     const int offset = row * dim;
     const T* __restrict__ src_row = src + offset;
     T* __restrict__ dst_row = dst + offset;
@@ -653,7 +650,7 @@ __global__ void KeD1BlockSoftmaxForward(T* __restrict__ dst,
       vec_src = reinterpret_cast<const VecT*>(&src_row[col])[0];
 #pragma unroll
       for(int i = 0; i < VECSIZE; i ++) {
-        sum_val += Exp(buf_src[i] - max_val);
+        sum_val += Exp(static_cast<AccT>(buf_src[i]) - max_val);
       }
     }
     sum_val = blockReduceSum(sum_val, 0xffffffff);
@@ -662,7 +659,8 @@ __global__ void KeD1BlockSoftmaxForward(T* __restrict__ dst,
       vec_src = reinterpret_cast<const VecT*>(&src_row[col])[0];
 #pragma unroll
       for(int i = 0; i < VECSIZE; i ++) {
-        buf_dst[i] = static_cast<T>(Exp(buf_src[i] - max_val) / sum_val);
+        buf_dst[i] = static_cast<T>(
+              Exp(static_cast<AccT>(buf_src[i]) - max_val) / (sum_val + 1e-6f));
       }
       reinterpret_cast<VecT*>(&dst_row[col])[0] = vec_dst;
     }
@@ -670,12 +668,28 @@ __global__ void KeD1BlockSoftmaxForward(T* __restrict__ dst,
 }
 
 template<typename T, int VECSIZE>
-void LaunchD1BlockSoftmax(CUDAStream &context, const T* in_data, T* out_data,
-                        const int N, const int dim) {
-  const int threads = std::min(dim, 1024);
+inline void LaunchD1BlockSoftmaxForwardKernel(cudaStream_t &stream, const T* in_data,
+                          T* out_data, const int N, const int dim) {
+  const int threads = std::min(dim, MAX_BLOCK_DIM);
   const int grids = N;
+  using AccT = typename GetAccType<T>::type;
 
-  KeD1BlockSoftmaxForward<T, float, VECSIZE>
-    <<<grids, threads, 0, context.stream()>>>(
+  KeD1BlockSoftmaxForward<T, AccT, VECSIZE>
+    <<<grids, threads, 0, stream>>>(
     out_data, in_data, N, dim);
+}
+
+template<typename T>
+inline void LaunchD1BlockSoftmaxForward(cudaStream_t &stream, const T* in_data,
+                        T* out_data, const int N, const int dim) {
+  if(dim % 4 == 0) {
+    LaunchD1BlockSoftmaxForwardKernel<T, 4>(
+      stream, in_data, out_data, N, dim);
+  } else if(dim % 2 == 0) {
+    LaunchD1BlockSoftmaxForwardKernel<T, 2>(
+      stream, in_data, out_data, N, dim);
+  } else {
+    LaunchD1BlockSoftmaxForwardKernel<T, 1>(
+      stream, in_data, out_data, N, dim);
+  }
 }
