@@ -60,7 +60,7 @@ __global__ void VecSoftmaxForward(T* dst, const T* src, const int batch_size,
   float* tmp4p = reinterpret_cast<float*>(&tmp4);
   float invsum = 1.f / (warpReduceSum<float>(
                             tmp4.x + tmp4.y + tmp4.z + tmp4.w, 0xffffffff) +
-                        1e-6f);
+                        std::numeric_limits<AccT>::min());
   for (int i = 0; i < VPT; ++i) {
     bufp[i] = static_cast<T>(tmp4p[i] * invsum);
   }
@@ -443,7 +443,7 @@ __global__ void KeArrangeYSoftmaxForward(T* __restrict__ dst,
   for(int dim_id = tidy; dim_id < dim; dim_id += blockDim.y)
     out_dst[dim_id * D] =
         static_cast<T>(Exp(static_cast<AccT>(out_src[dim_id * D]) - max_val) /
-        (sum_val + 1e-6f));
+        (sum_val + std::numeric_limits<AccT>::min()));
 }
 
 template<typename T>
@@ -457,6 +457,8 @@ float TimeOfArrangeYSoftmax(CUDAStream &context, const DDim &dims, const int in_
   const int N = SizeToAxis(axis, dims);
   const int D = SizeOutAxis(axis, dims);
 
+  using AccT = typename GetAccType<T>::type;
+
   constexpr int coalesce_size = 256 / sizeof(T);
   int dim_y = std::min(MAX_BLOCK_DIM / coalesce_size, dim);
   int D_x = MAX_BLOCK_DIM / dim_y;
@@ -468,7 +470,7 @@ float TimeOfArrangeYSoftmax(CUDAStream &context, const DDim &dims, const int in_
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++) {
-    KeArrangeYSoftmaxForward<T, float>
+    KeArrangeYSoftmaxForward<T, AccT>
       <<<grids, threads, dim_y * D_x * sizeof(float), context.stream()>>>(
       out_data, in_data, N, dim, D);
   }
@@ -560,7 +562,7 @@ __global__ void NoVec_KeLoopDimSoftmaxForward(T *dst, const T *src, const int N,
   for(int dim_id = 0; dim_id < dim; dim_id ++)
     out_dst[dim_id * D] =
         static_cast<T>(Exp(static_cast<AccT>(out_src[dim_id * D]) - max_val) /
-        (sum_val + 1e-6f));
+        (sum_val + std::numeric_limits<AccT>::min()));
 }
 
 
@@ -640,7 +642,7 @@ __global__ void KeLoopDimSoftmaxForward(T* __restrict__ dst,
     for(int i = 0; i < VECSIZE; i ++) {
       buf_dst[i] = static_cast<T>(
           Exp(static_cast<AccT>(buf_src[i]) - max_val[i]) /
-          (sum_val[i] + 1e-6f));
+          (sum_val[i] + std::numeric_limits<AccT>::min()));
     }
     reinterpret_cast<VecT*>(&dst_row[dim_id * D])[0] = vec_dst;
   }
@@ -740,7 +742,7 @@ __global__ void NoVec_KeSpandDimDSoftmaxForward(T *dst, const T *src, const int 
     // TODO(jiangcheng): how to eliminate twice Exp
     for(int id = tid; id < dim * D; id += BlockDim)
       out_dst[id] = static_cast<T>(Exp(static_cast<AccT>(out_src[id]) - max_val) /
-                      (sum_val + 1e-6f));
+                      (sum_val + std::numeric_limits<AccT>::min()));
   }
 }
 
@@ -759,12 +761,13 @@ float TimeOfNoVecSpandDimDSoftmax(CUDAStream &context, const DDim &dims, const i
 
   const int grids = N;
   const int threads = D * (1024 / D);
+  using AccT = typename GetAccType<T>::type;
 
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++) {
-    NoVec_KeSpandDimDSoftmaxForward<T, float>
-      <<<grids, threads, threads * sizeof(float), context.stream()>>>(
+    NoVec_KeSpandDimDSoftmaxForward<T, AccT>
+      <<<grids, threads, threads * sizeof(AccT), context.stream()>>>(
       out_data, in_data, N, dim, D);
   }
   float cost = clock->stop();
@@ -846,7 +849,7 @@ __global__ void KeSpandDimDSoftmaxForward(T* __restrict__ dst,
       for(int i = 0; i < VECSIZE; i ++) {
         buf_dst[i] = static_cast<T>(
           Exp(static_cast<AccT>(buf_src[i]) - max_val[i]) /
-          (sum_val[i] + 1e-6f));
+          (sum_val[i] + std::numeric_limits<AccT>::min()));
       }
       reinterpret_cast<VecT*>(&dst_row[id])[0] = vec_dst;
     }
@@ -919,10 +922,11 @@ float TimeOfOneflowD1WarpSoftmax(CUDAStream &context, const DDim &dims,
 
   assert(D == 1);
   assert(dim <= 1024);
+  using AccT = typename GetAccType<T>::type;
 
 #define DEFINE_ONE_ELIF(col)                        \
   else if (dim <= (col) * WARP_SIZE) {             \
-    DispatchOneflowD1WarpSoftmax<T, float, col>(    \
+    DispatchOneflowD1WarpSoftmax<T, AccT, col>(    \
       context, in_data, out_data, N, dim);      \
   }
 
@@ -1078,6 +1082,7 @@ float TimeOfNoVecD1BlockSharedSoftmax(CUDAStream &context, const DDim &dims,
   assert(D == 1);
   assert(dim > 1024);
   assert(dim <= 4096);
+  using AccT = typename GetAccType<T>::type;
 
   const int threads = std::min(dim, 1024);
   const int grids = N;
@@ -1085,8 +1090,8 @@ float TimeOfNoVecD1BlockSharedSoftmax(CUDAStream &context, const DDim &dims,
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++) {
-    NoVec_KeD1BlockSharedSoftmaxForward<T, float>
-      <<<grids, threads, dim * sizeof(float), context.stream()>>>(
+    NoVec_KeD1BlockSharedSoftmaxForward<T, AccT>
+      <<<grids, threads, dim * sizeof(AccT), context.stream()>>>(
       out_data, in_data, N, dim);
   }
   float cost = clock->stop();
@@ -1135,11 +1140,12 @@ float TimeOfNoVecD1BlockSoftmax(CUDAStream &context, const DDim &dims,
 
   const int threads = std::min(dim, 1024);
   const int grids = N;
+  using AccT = typename GetAccType<T>::type;
 
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++) {
-    NoVec_KeD1BlockSoftmaxForward<T, float>
+    NoVec_KeD1BlockSoftmaxForward<T, AccT>
       <<<grids, threads, 0, context.stream()>>>(
       out_data, in_data, N, dim);
   }
@@ -1378,7 +1384,9 @@ int TestSoftmax(CUDAStream &context, const DDim &dims, const int in_axis) {
 int main() {
   srand(time(0));
   CUDAStream context;
-  typedef float T;
+  typedef double T;
+  std::cout<< std::numeric_limits<float>::min() << std::endl;
+  std::cout<< std::numeric_limits<double>::min() << std::endl;
   do {
     DDim dims = {512, 896, 48};
     int in_axis = 1;

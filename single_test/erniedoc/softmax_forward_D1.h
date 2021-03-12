@@ -660,7 +660,7 @@ __global__ void KeD1BlockSoftmaxForward(T* __restrict__ dst,
 #pragma unroll
       for(int i = 0; i < VECSIZE; i ++) {
         buf_dst[i] = static_cast<T>(
-              Exp(static_cast<AccT>(buf_src[i]) - max_val) / (sum_val + 1e-6f));
+              Exp(static_cast<AccT>(buf_src[i]) - max_val) / (sum_val + std::numeric_limits<AccT>::min()));
       }
       reinterpret_cast<VecT*>(&dst_row[col])[0] = vec_dst;
     }

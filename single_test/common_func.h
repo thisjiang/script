@@ -72,34 +72,35 @@ __global__ void KeMaxError(const T *a, const T *b, const size_t n,
 template<typename T, int BLOCKDIM>
 T KeMaxErrorDevice(const T *a, const T *b, const size_t n,
                 cudaStream_t &stream) {
-    const int threads = BLOCKDIM;
-    const int grids = (n + threads - 1) / threads;
+    const int grids = (n + BLOCKDIM - 1) / BLOCKDIM;
 
     T *block_max;
-    cudaMalloc(&block_max, (grids + 1) * sizeof(T));
+    cudaMalloc(&block_max, grids * sizeof(T));
     T *block_err;
-    cudaMallocHost(&block_err, (grids + 1) * sizeof(T));
+    cudaMalloc(&block_err, sizeof(T));
+    T *final_err;
+    cudaMallocHost(&final_err, sizeof(T));
 
     void *tmp_mem = nullptr;
     size_t tmp_size = 0;
     cub::DeviceReduce::Max(tmp_mem, tmp_size, block_max, 
-                            block_max + grids, grids, stream);
+                            block_err, grids, stream);
     cudaMalloc(&tmp_mem, tmp_size);
-
-    cudaMemsetAsync(block_max, 0, (grids + 1) * sizeof(T), stream);
-    KeMaxError<T, BLOCKDIM><<<grids, threads, 0, stream>>>
+    cudaMemsetAsync(block_max, 0, grids * sizeof(T), stream);
+    KeMaxError<T, BLOCKDIM><<<grids, BLOCKDIM, 0, stream>>>
                                 (a, b, n, block_max);
     cub::DeviceReduce::Max(tmp_mem, tmp_size, block_max, 
-                           block_max + grids, grids, stream);
+                           block_err, grids, stream);
     
-    cudaMemcpyAsync(block_err, block_max, (grids + 1) * sizeof(T), 
+    cudaMemcpyAsync(final_err, block_err, sizeof(T), 
                     cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
-    T max_err = block_err[grids];
+    T max_err = *final_err;
 
     cudaFree(block_max); // implict sync
     cudaFree(tmp_mem);
-    cudaFreeHost(block_err);
+    cudaFree(block_err);
+    cudaFreeHost(final_err);
 
     return max_err;
 }

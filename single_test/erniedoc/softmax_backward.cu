@@ -49,6 +49,12 @@ union vec_t {
 };
 
 template <>
+union vec_t<double, 4> {
+  double4 s;
+  float v[4];
+};
+
+template <>
 union vec_t<float, 4> {
   float4 s;
   float v[4];
@@ -282,6 +288,7 @@ template<typename T>
 float TimeOfOldWarpSoftmax(CUDAStream &context, const DDim &dims, const int in_axis,
                         const T* out_data, const T* dout_data, T *dx_data) {
   auto clock = TimeOfKernel::get(context);
+  if(sizeof(T) <= 4) return 0.0f;
 
   const int rank = dims.size();
   const int axis = CanonicalAxis(in_axis, rank);
@@ -400,13 +407,14 @@ float TimeOfNoVecLoopDimSoftmax(CUDAStream &context, const DDim &dims, const int
   const int N = SizeToAxis(axis, dims);
   const int D = SizeOutAxis(axis, dims);
 
+  using AccT = typename GetAccType<T>::type;
   int threads = std::min(N * D, 256);
   int grids = (N * D + threads - 1) / threads;
 
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++) {
-    NoVec_KeLoopDimSoftmaxBackward<T, float>
+    NoVec_KeLoopDimSoftmaxBackward<T, AccT>
       <<<grids, threads, 0, context.stream()>>>(
       dx_data, out_data, dout_data, N, dim, D);
   }
@@ -571,6 +579,7 @@ float TimeOfNoVecSpandDimDSoftmax(CUDAStream &context, const DDim &dims, const i
   const int D = SizeOutAxis(axis, dims);
 
   if(D > 1024) return 0.0f;
+  using AccT = typename GetAccType<T>::type;
 
   const int grids = N;
   const int threads = D * (1024 / D);
@@ -578,8 +587,8 @@ float TimeOfNoVecSpandDimDSoftmax(CUDAStream &context, const DDim &dims, const i
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++) {
-    NoVec_KeSpandDimDSoftmaxBackward<T, float>
-      <<<grids, threads, threads * sizeof(float), context.stream()>>>(
+    NoVec_KeSpandDimDSoftmaxBackward<T, AccT>
+      <<<grids, threads, threads * sizeof(AccT), context.stream()>>>(
       dx_data, out_data, dout_data, N, dim, D);
   }
   float cost = clock->stop();
@@ -603,10 +612,8 @@ __global__ void KeSpandDimDSoftmaxBackward(T* __restrict__ dx,
   T* buf_dout = reinterpret_cast<T*>(&vec_dout);
   T* buf_dx = reinterpret_cast<T*>(&vec_dx);
 
-  const int tid = threadIdx.x;
-  const int vec_id = tid * VECSIZE;
-  const int BlockDim = blockDim.x;
-  const int vec_num = BlockDim * VECSIZE;
+  const int vec_id = threadIdx.x * VECSIZE;
+  const int vec_num = blockDim.x * VECSIZE;
   for(int out_id = blockIdx.x; out_id < N; out_id += gridDim.x) {
     const int offset = out_id * dim * D;
     const T* __restrict__ out_row = out + offset;
@@ -655,14 +662,14 @@ template<typename T, int VECSIZE>
 inline void LaunchSpandDimDSoftmaxBackwardKernel(const cudaStream_t &stream,
                 T *dx_data, const T* out_data, const T* dout_data,
                 const int N, const int dim, const int D) {
-  int dim_size = 128;
-  if(D <= 256) dim_size = 256;
-  else if(D <= 512) dim_size = 512;
-  else if(D <= MAX_BLOCK_DIM) dim_size = MAX_BLOCK_DIM;
+  int D_size = 128;
+  if(D <= 256) D_size = 256;
+  else if(D <= 512) D_size = 512;
+  else if(D <= MAX_BLOCK_DIM) D_size = MAX_BLOCK_DIM;
   else assert(false && "not support");
 
   const int grids = N;
-  const int threads = D * (dim_size / D);
+  const int threads = D * (D_size / D);
   using AccT = typename GetAccType<T>::type;
 
   KeSpandDimDSoftmaxBackward<T, AccT, VECSIZE>
@@ -840,9 +847,9 @@ int TestSoftmax(CUDAStream &context, const DDim &dims, const int in_axis) {
   MallocDevice<T> dx_Spand(n_spand, context);
   MallocDevice<T> dx_SpandNoVec(n_spand, context);
 
-  out_h.Random(static_cast<T>(0), static_cast<T>(1));
+  out_h.Random(static_cast<T>(1e-7), static_cast<T>(1e-6));
   out.CopyFrom(out_h);
-  dout_h.Random(static_cast<T>(-100), static_cast<T>(100));
+  dout_h.Random(static_cast<T>(100), static_cast<T>(1000));
   dout.CopyFrom(dout_h);
   T* out_data = out.data();
   T* dout_data = dout.data();
@@ -985,7 +992,7 @@ int TestSoftmax(CUDAStream &context, const DDim &dims, const int in_axis) {
 int main() {
   srand(time(0));
   CUDAStream context;
-  typedef float T;
+  typedef double T;
   do {
     DDim dims = {512, 896, 48};
     int in_axis = 1;

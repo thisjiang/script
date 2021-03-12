@@ -152,6 +152,41 @@ static void OldElemwiseGradBroadcast2CUDA(cudaStream_t stream, const T *x,
       x, y, out, dout, pre, n, post, is_xsize_larger, dx_op, dy_op, dx, dy);
 }
 
+// when n is small, it's very useful
+template <typename T, typename DX_OP, typename DY_OP>
+static __global__ void ElemwiseGradBroadcastAtomic2CUDAKernel(
+    const T *x, const T *y, const T *out, const T *dout, int pre, int n,
+    int post, bool is_xsize_larger, DX_OP dx_op, DY_OP dy_op, T* __restrict__ dx, T* __restrict__ dy) {
+  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  const int nid = (tid / post) % n;
+
+  if(tid > pre * n * post) return;
+
+  if (is_xsize_larger) {
+    int x_offset = tid;
+
+    if (dx != nullptr) {
+      dx[x_offset] = dx_op(x[x_offset], y[nid], out[x_offset], dout[x_offset]);
+    }
+
+    if (dy != nullptr) {
+      T val = dy_op(x[x_offset], y[nid], out[x_offset], dout[x_offset]);
+      atomicAdd(dy + nid, val);
+    }
+  } else {  // x.dims < y.dims, broadcast for x.
+    int y_offset = tid;
+
+    if (dy != nullptr) {
+      dy[y_offset] = dy_op(x[nid], y[y_offset], out[y_offset], dout[y_offset]);
+    }
+
+    if (dx != nullptr) {
+      T val = dx_op(x[nid], y[y_offset], out[y_offset], dout[y_offset]);
+      atomicAdd(dx + nid, val);
+    }
+  }
+}
+
 template <typename T, typename DX_OP, typename DY_OP>
 static __global__ void ElemwiseGradBroadcast2BlockCUDAKernel(
     const T *x, const T *y, const T *out, const T *dout, int pre, int n,
@@ -298,39 +333,43 @@ static __global__ void ElemwiseGradBroadcast2WarpCUDAKernel(
 }
 
 // each matrix is divided into "tile_num" tiles by dimension "n"
-// each block deal with "tile_num * post" tiles
-// loop "pre" outside assure read and write coalescing
+// each tile compute "pre * post" elemwise_grad result
+// post number continuous threads deal with a tile
+// each thread loop "pre" outside assure read and write coalescing
 template <typename T, typename DX_OP, typename DY_OP, int BLOCKDIM>
 static __global__ void ElemwiseGradBroadcast2ThreadCUDAKernel(
     const T *x, const T *y, const T *out, const T *dout, int pre, int n,
     int post, bool is_xsize_larger, DX_OP dx_op, DY_OP dy_op, T *dx, T *dy) {
+  // each block deal with "tile_num" tiles, deal with t_num element
   const int tile_num = BLOCKDIM / post;
+  const int t_num = tile_num * post;
   const int tid = threadIdx.x;
   // return when thread exceed tile number
-  if (tid >= tile_num * post) return;
+  if(tid >= t_num) return;
 
   const int tile_id = tid / post;
   const int n_id = blockIdx.x * tile_num + tile_id;
   const int ttid = tid % post;
+  if(n_id >= n) return;
 
-  __shared__ T s_data[BLOCKDIM];
+  __shared__ __align__(sizeof(T)) unsigned char s_mem[BLOCKDIM * sizeof(T)];
+  T* s_data = reinterpret_cast<T*>(s_mem);
   s_data[tid] = 0;
 
   if (is_xsize_larger) {
-    for (int i = 0; i < pre; i++) {
+    for (int i = 0; i < pre; i ++) {
       // x_offset is consecutive for all thread in block
       int x_offset = i * n * post + n_id * post + ttid;
 
       if (dx != nullptr) {
         // read and write dx,x,out,dout is coalescing
-        dx[x_offset] =
-            dx_op(x[x_offset], y[n_id], out[x_offset], dout[x_offset]);
+        dx[x_offset] = dx_op(x[x_offset], y[n_id], out[x_offset], dout[x_offset]);
       }
 
       if (dy != nullptr) {
         // using shared memory to store "ttid"'s "dy[nid]" value
-        s_data[tid] +=
-            dy_op(x[x_offset], y[n_id], out[x_offset], dout[x_offset]);
+        s_data[tid] += 
+              dy_op(x[x_offset], y[n_id], out[x_offset], dout[x_offset]);
       }
     }
     __syncthreads();
@@ -338,67 +377,37 @@ static __global__ void ElemwiseGradBroadcast2ThreadCUDAKernel(
     if (dy != nullptr && ttid == 0) {
       // first tile thread calculate total "dy[nid]" value
       T val(0);
-      const int tile_over = (tile_id + 1) * post;
-      for (int l = tile_over - post; l < tile_over; l++) val += s_data[l];
+      const int tile_beg = tile_id * post;
+      const int tile_end = min(tile_beg + post, t_num);
+      for(int l = tile_beg; l < tile_end; l ++) {
+        val += s_data[l];
+      }
       dy[n_id] = val;
     }
   } else {  // x.dims < y.dims, broadcast for x.
-    for (int i = 0; i < pre; i++) {
+    for (int i = 0; i < pre; i ++) {
       // y_offset is consecutive for all thread in block
       int y_offset = i * n * post + n_id * post + ttid;
 
       if (dy != nullptr) {
-        dy[y_offset] =
-            dy_op(x[n_id], y[y_offset], out[y_offset], dout[y_offset]);
+        dy[y_offset] = dy_op(x[n_id], y[y_offset], out[y_offset], dout[y_offset]);
       }
 
       if (dx != nullptr) {
-        s_data[tid] +=
-            dx_op(x[n_id], y[y_offset], out[y_offset], dout[y_offset]);
+        s_data[tid] += 
+              dx_op(x[n_id], y[y_offset], out[y_offset], dout[y_offset]);
       }
     }
     __syncthreads();
 
     if (dx != nullptr && ttid == 0) {
       T val(0);
-      const int tile_over = (tile_id + 1) * post;
-      for (int l = tile_over - post; l < tile_over; l++) val += s_data[l];
+      const int tile_beg = tile_id * post;
+      const int tile_end = min(tile_beg + post, t_num);
+      for(int l = tile_beg; l < tile_end; l ++) {
+        val += s_data[l];
+      }
       dx[n_id] = val;
-    }
-  }
-}
-
-// when n is small, it's very useful
-template <typename T, typename DX_OP, typename DY_OP>
-static __global__ void ElemwiseGradBroadcastAtomic2CUDAKernel(
-    const T *x, const T *y, const T *out, const T *dout, int pre, int n,
-    int post, bool is_xsize_larger, DX_OP dx_op, DY_OP dy_op, T* __restrict__ dx, T* __restrict__ dy) {
-  const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  const int nid = (tid / post) % n;
-
-  if(tid > pre * n * post) return;
-
-  if (is_xsize_larger) {
-    int x_offset = tid;
-
-    if (dx != nullptr) {
-      dx[x_offset] = dx_op(x[x_offset], y[nid], out[x_offset], dout[x_offset]);
-    }
-
-    if (dy != nullptr) {
-      T val = dy_op(x[x_offset], y[nid], out[x_offset], dout[x_offset]);
-      atomicAdd(dy + nid, val);
-    }
-  } else {  // x.dims < y.dims, broadcast for x.
-    int y_offset = tid;
-
-    if (dy != nullptr) {
-      dy[y_offset] = dy_op(x[nid], y[y_offset], out[y_offset], dout[y_offset]);
-    }
-
-    if (dx != nullptr) {
-      T val = dx_op(x[nid], y[y_offset], out[y_offset], dout[y_offset]);
-      atomicAdd(dx + nid, val);
     }
   }
 }
@@ -410,17 +419,18 @@ static void NewElemwiseGradBroadcast2CUDA(cudaStream_t stream, const T *x,
                                        bool is_xsize_larger, DX_OP dx_op,
                                        DY_OP dy_op, T *dx, T *dy) {
   int num = pre * post;
-  if(post >= 32 || num >= ELEMWISE_MAX_BLOCK_DIM) {
-    int block_size = std::min(ELEMWISE_MAX_BLOCK_DIM, num);
-    int grid_size = n;
-    ElemwiseGradBroadcast2BlockCUDAKernel<<<grid_size, block_size, 0, stream>>>(
+  if(num <= 64 && n >= ELEMWISE_MAX_BLOCK_DIM * 3) {
+    // each thread handle one operation
+    constexpr int BLOCKDIM = 256;
+    int tile_num = BLOCKDIM / post;
+    int grid_size = (n + tile_num - 1) / tile_num;
+    ElemwiseGradBroadcast2ThreadCUDAKernel<T, DX_OP, DY_OP, BLOCKDIM>
+        <<<grid_size, BLOCKDIM, 0, stream>>>(
         x, y, out, dout, pre, n, post, is_xsize_larger, dx_op, dy_op, dx, dy);
   } else {
-    // each thread handle one operation
-    constexpr int block_size = 256;
-    int tile_num = block_size / post;
-    int grid_size = (n + tile_num - 1) / tile_num;
-    ElemwiseGradBroadcast2ThreadCUDAKernel<T, DX_OP, DY_OP, block_size>
+    int block_size = std::min(ELEMWISE_MAX_BLOCK_DIM, num);
+    int grid_size = n;
+    ElemwiseGradBroadcast2CUDAKernel<T, DX_OP, DY_OP>
         <<<grid_size, block_size, 0, stream>>>(
         x, y, out, dout, pre, n, post, is_xsize_larger, dx_op, dy_op, dx, dy);
   }
@@ -454,22 +464,22 @@ int ElemwiseGradBroadcast(CUDAStream &context,
   h_y.resize(y_num * sizeof(T), true);
   d_y.resize(y_num * sizeof(T), true);
 
-  T* x_ptr = h_x.data<T>();
-  T* y_ptr = h_y.data<T>();
-  T* out_ptr = h_out.data<T>();
-  T *dout_ptr = h_dout.data<T>();
-
   // generate rand number
-  Random<T>(x_ptr, x_num, 1, 0);
-  Random<T>(y_ptr, y_num, 1, 0);
-  Random<T>(out_ptr, out_num, 1, 0);
-  Random<T>(dout_ptr, out_num, 1, 0);
+  h_x.Random<T>(0, 1);
+  h_y.Random<T>(0, 1);
+  h_out.Random<T>(0, 1);
+  h_dout.Random<T>(0, 1);
 
   // copy data
   d_x.CopyFrom(h_x);
   d_y.CopyFrom(h_y);
   d_out.CopyFrom(h_out);
   d_dout.CopyFrom(h_dout);
+
+  dx_old.SetZero();
+  dy_old.SetZero();
+  dx_new.SetZero();
+  dy_new.SetZero();
 
   // Set output size
   dx_old.resize(x_num * sizeof(T));
@@ -478,13 +488,6 @@ int ElemwiseGradBroadcast(CUDAStream &context,
   dy_new.resize(y_num * sizeof(T));
 
   // Initial kernel
-  OldElemwiseGradBroadcast2CUDA(context.stream(), 
-                                d_x.data<T>(), d_y.data<T>(),
-                                d_out.data<T>(), d_dout.data<T>(),
-                                pre, n, post, is_xsize_larger,
-                                dx_op, dy_op, 
-                                dx_old.data<T>(), dy_old.data<T>());
-
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++)
@@ -497,15 +500,6 @@ int ElemwiseGradBroadcast(CUDAStream &context,
   float old_time = clock->stop();
 
   // Initial kernel
-  dx_new.SetZero();
-  dy_new.SetZero();
-  NewElemwiseGradBroadcast2CUDA(context.stream(), 
-                                d_x.data<T>(), d_y.data<T>(),
-                                d_out.data<T>(), d_dout.data<T>(),
-                                pre, n, post, is_xsize_larger,
-                                dx_op, dy_op, 
-                                dx_new.data<T>(), dy_new.data<T>());
-
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++)
@@ -536,7 +530,7 @@ int ElemwiseGradBroadcast(CUDAStream &context,
     fprint(dy_err);
     fprintf(stderr, "\n");
 
-    if(pre * post * n > 0) return 1;
+    if(pre * post * n > 500) return 1;
 
     fprintf(stderr, "dx_old\n");
     dx_old.Print<T>(1, x_num);
@@ -567,14 +561,17 @@ int main() {
 
     srand(time(NULL));
 
-    int pre = 2, post = 3, n = 100;
+    int pre = 2, post = 3, n = 10;
     bool is_xsize_larger = true;
 
     do {
-      pre = rand() % 100 + 1;
-      post = rand() % 100 + 1;
-      n = rand() % 10000 + 1000;
+      // pre = rand() % 31 + 1;
+      // post = rand() % 31 + 1;
+      // n = rand() % 10000 + 1000;
+      printf("Please Input dims [pre, n, post]\n");
+      std::cin >> pre >> n >> post;
 
+      printf("shape = [%d, %d, %d]\n", pre, n, post);
       int max_num = pre * post * n * sizeof(T);
 
       AllocHost h_x(max_num, context), h_y(max_num, context),
@@ -592,7 +589,7 @@ int main() {
                             MaxGradDx<T>(), MaxGradDy<T>(),
                             dx_old, dy_old, dx_new, dy_new);
       if(res == CUDA_FAILED) {
-        fprintf(stderr, "Compte Failed with CUDA error\n");
+        fprintf(stderr, "Compute Failed with CUDA error\n");
         return 1;
       }
       is_xsize_larger = false;
@@ -603,10 +600,11 @@ int main() {
                             MaxGradDx<T>(), MaxGradDy<T>(),
                             dx_old, dy_old, dx_new, dy_new);
       if(res == CUDA_FAILED) {
-        fprintf(stderr, "Compte Failed with CUDA error\n");
+        fprintf(stderr, "Compute Failed with CUDA error\n");
         return 1;
       }
+      printf("**************************************************\n");
     } while(true);
-    
+
     return 0;
 }
