@@ -19,6 +19,48 @@ typedef half float16;
 
 /***********************************************************/
 
+template <typename T>
+struct GetAccType {
+  using type = T;
+};
+template <>
+struct GetAccType<float16> {
+  using type = float;
+};
+
+template <typename T, int N>
+struct GetVecType;
+template <typename T>
+struct GetVecType<T, 1> {
+  using type = T;
+};
+template <>
+struct GetVecType<float16, 2> {
+  using type = half2;
+};
+template <>
+struct GetVecType<float16, 4> {
+  using type = float2;
+};
+template <>
+struct GetVecType<float, 2> {
+  using type = float2;
+};
+template <>
+struct GetVecType<float, 4> {
+  using type = float4;
+};
+template <>
+struct GetVecType<double, 2> {
+  using type = double2;
+};
+template <>
+struct GetVecType<double, 4> {
+  using type = double4;
+};
+
+/***********************************************************/
+
 template <typename T, int Size, T DefaultValue>
 struct __align__(sizeof(T)) Array {
     HOSTDEVICE const T& operator[](int index) const {
@@ -66,7 +108,7 @@ __forceinline__ __device__ T Abs(const T val) {
 }
 template<>
 __forceinline__ __device__ half Abs(const half val) {
-  return __hlt(val, 0) ? __hneg(val) : val;
+  return __hlt(val, (half)0) ? __hneg(val) : val;
 }
 
 /***********************************************************/

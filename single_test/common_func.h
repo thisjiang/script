@@ -38,25 +38,28 @@ const char* EMPTY_STRING = "";
 
 /***********************************************************/
 template<typename T>
-T MaxErrorHost(const T *a, const T *b, const size_t n) {
-    T maxerr = 0.0, err = 0.0;
+typename GetAccType<T>::type MaxErrorHost(
+        const T *a, const T *b, const size_t n) {
+    using AccT = typename GetAccType<T>::type;
+    AccT maxerr = 0.0, err = 0.0;
     for(int i = 0; i < n; i ++) {
-        err = Abs(a[i] - b[i]);
+        err = Abs(type2type<T, AccT>(a[i]) - type2type<T, AccT>(b[i]));
         if(err > maxerr) maxerr = err;
     }
     return maxerr;
 }
 
-template<typename T, int BLOCKDIM>
-__global__ void KeMaxError(const T *a, const T *b, const size_t n, 
-                           T *block_max) {
+template<typename T, typename AccT, int BLOCKDIM>
+__global__ void KeMaxError(const T* __restrict__ a,
+                          const T* __restrict__ b,
+                          const size_t n, AccT *block_max) {
   const int tid = blockIdx.x * blockDim.x + threadIdx.x;
   const int tid_in_block = threadIdx.x;
-  __shared__ T s_data[BLOCKDIM];
+  __shared__ AccT s_data[BLOCKDIM];
 
-  T max_err(0);
+  AccT max_err(0);
   for(int i = tid; i < n; i += blockDim.x * gridDim.x) {
-      T err = Abs(a[i] - b[i]);
+      AccT err = Abs(type2type<T, AccT>(a[i]) - type2type<T, AccT>(b[i]));
       if(max_err < err) max_err = err;
   }
   s_data[tid_in_block] = max_err;
@@ -70,32 +73,34 @@ __global__ void KeMaxError(const T *a, const T *b, const size_t n,
 }
 
 template<typename T, int BLOCKDIM>
-T KeMaxErrorDevice(const T *a, const T *b, const size_t n,
+typename GetAccType<T>::type KeMaxErrorDevice(
+                const T *a, const T *b, const size_t n,
                 cudaStream_t &stream) {
     const int grids = (n + BLOCKDIM - 1) / BLOCKDIM;
 
-    T *block_max;
-    cudaMalloc(&block_max, grids * sizeof(T));
-    T *block_err;
-    cudaMalloc(&block_err, sizeof(T));
-    T *final_err;
-    cudaMallocHost(&final_err, sizeof(T));
+    using AccT = typename GetAccType<T>::type;
+    AccT *block_max;
+    cudaMalloc((void**)&block_max, grids * sizeof(AccT));
+    AccT *block_err;
+    cudaMalloc((void**)&block_err, sizeof(AccT));
+    AccT *final_err;
+    cudaMallocHost((void**)&final_err, sizeof(AccT));
 
     void *tmp_mem = nullptr;
     size_t tmp_size = 0;
     cub::DeviceReduce::Max(tmp_mem, tmp_size, block_max, 
                             block_err, grids, stream);
     cudaMalloc(&tmp_mem, tmp_size);
-    cudaMemsetAsync(block_max, 0, grids * sizeof(T), stream);
-    KeMaxError<T, BLOCKDIM><<<grids, BLOCKDIM, 0, stream>>>
+    cudaMemsetAsync(block_max, 0, grids * sizeof(AccT), stream);
+    KeMaxError<T, AccT, BLOCKDIM><<<grids, BLOCKDIM, 0, stream>>>
                                 (a, b, n, block_max);
     cub::DeviceReduce::Max(tmp_mem, tmp_size, block_max, 
                            block_err, grids, stream);
     
-    cudaMemcpyAsync(final_err, block_err, sizeof(T), 
+    cudaMemcpyAsync(final_err, block_err, sizeof(AccT), 
                     cudaMemcpyDeviceToHost, stream);
     cudaStreamSynchronize(stream);
-    T max_err = *final_err;
+    AccT max_err = *final_err;
 
     cudaFree(block_max); // implict sync
     cudaFree(tmp_mem);
@@ -106,7 +111,8 @@ T KeMaxErrorDevice(const T *a, const T *b, const size_t n,
 }
 
 template<typename T>
-T MaxErrorDevice(const T *a, const T *b, const size_t n,
+typename GetAccType<T>::type MaxErrorDevice(
+                const T *a, const T *b, const size_t n,
                 cudaStream_t &stream) {
   if(n < 32) return KeMaxErrorDevice<T, 1>(a, b, n, stream);
   else if(n < 64) return KeMaxErrorDevice<T, 32>(a, b, n, stream);

@@ -15,6 +15,9 @@ constexpr int MAX_BLOCK_DIM = 1024;
 constexpr int WARP_SIZE = 32;
 constexpr int HALF_WARP = WARP_SIZE / 2;
 
+
+typedef cudaStream_t gpuStream_t;
+
 /***********************************************************/
 // CUDAStream
 class CUDAStream final {

@@ -88,7 +88,7 @@ public:
     }
 
     template<typename T>
-    T MaxError(const BaseAlloc &data) const {
+    typename GetAccType<T>::type MaxError(const BaseAlloc &data) const {
         assert(this->size() == data.size());
         assert(this->place() == data.place());
         T max_err(0);
@@ -395,7 +395,7 @@ public:
         return _num;
     }
 
-    T MaxError(const MallocHost &data) const {
+    typename GetAccType<T>::type MaxError(const MallocHost &data) const {
         return AllocHost::MaxError<T>(data);
     }
 
@@ -444,7 +444,7 @@ public:
         return _num;
     }
 
-    T MaxError(const MallocDevice &data) const {
+    typename GetAccType<T>::type MaxError(const MallocDevice &data) const {
         return AllocDevice::MaxError<T>(data);
     }
 };
