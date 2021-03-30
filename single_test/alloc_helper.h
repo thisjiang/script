@@ -18,6 +18,9 @@ enum class Place {
     DEVICE, HOST
 };
 
+static inline Place get_device_place() {return Place::DEVICE;}
+static inline Place get_host_place() {return Place::HOST;}
+
 static inline bool is_host_place(const Place &p) {return p == Place::HOST;}
 static inline bool is_device_place(const Place &p) {return p == Place::DEVICE;}
 

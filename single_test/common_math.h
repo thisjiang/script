@@ -17,6 +17,12 @@
 
 typedef half float16;
 
+namespace paddle {
+namespace platform {
+  typedef half float16;
+}
+}
+
 /***********************************************************/
 
 template <typename T>
@@ -24,7 +30,7 @@ struct GetAccType {
   using type = T;
 };
 template <>
-struct GetAccType<float16> {
+struct GetAccType<paddle::platform::float16> {
   using type = float;
 };
 
@@ -35,11 +41,11 @@ struct GetVecType<T, 1> {
   using type = T;
 };
 template <>
-struct GetVecType<float16, 2> {
+struct GetVecType<paddle::platform::float16, 2> {
   using type = half2;
 };
 template <>
-struct GetVecType<float16, 4> {
+struct GetVecType<paddle::platform::float16, 4> {
   using type = float2;
 };
 template <>
@@ -153,6 +159,36 @@ template<typename T>
 static HOSTDEVICE size_t GetSize(const T *dims, int n) {
     size_t res = 1;
     for(int i = 0; i < n; i ++) res *= dims[i];
+    return res;
+}
+
+/***********************************************************/
+static HOSTDEVICE size_t GetSum(const dim3 &dims) {
+    return dims.x + dims.y + dims.z;
+}
+
+static HOSTDEVICE size_t GetSum(const Dim3 &dims) {
+    return dims[0] + dims[1] + dims[2];
+}
+
+template<typename T>
+static inline size_t GetSum(const std::vector<T> &dims) {
+    size_t res = 0;
+    for(auto d : dims) res += d;
+    return res;
+}
+
+template<typename T, size_t D>
+static inline size_t GetSum(const std::array<T, D> &dims) {
+    size_t res = 0;
+    for(auto d : dims) res += d;
+    return res;
+}
+
+template<typename T>
+static HOSTDEVICE size_t GetSum(const T *dims, int n) {
+    size_t res = 0;
+    for(int i = 0; i < n; i ++) res += dims[i];
     return res;
 }
 

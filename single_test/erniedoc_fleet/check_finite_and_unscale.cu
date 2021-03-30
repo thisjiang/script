@@ -1,3 +1,6 @@
+// header file
+#include "check_finite_and_unscale.h"
+
 // C system file
 #include "stdio.h"
 
@@ -8,116 +11,81 @@
 #include <vector>
 // Library file
 #include "../common.h"
-#include "../cudnn_helper.h"
 
-constexpr int LOOPNUM = 100;
-
-template <typename MT>
-__global__ void KeInitial(const MT scale_val, MT* scale, bool* found_inf) {
-  *scale = scale_val;
-  *found_inf = false;
-}
-
-template<typename MT>
-float InitalKernel(CUDAStream &dev_ctx, MT* scale, bool* found_inf) {
-  auto clock = TimeOfKernel::get(dev_ctx);
-
-  MT scale_val;
-  Random(&scale_val, 1);
-  clock->start();
-  KeInitial<<<1, 1, 0, dev_ctx.stream()>>>(scale_val, scale, found_inf);
-  float cost = clock->stop();
-
-  return cost;
-}
+constexpr int MAXRAND = 100000;
 
 /************************************************************************/
-template <typename T, typename MT>
-__global__ void OldCheckFiniteAndUnscale(const T* in, const MT* scale, int num,
-                                      bool* found_inf, T* out) {
-  const int idx = threadIdx.x + blockIdx.x * blockDim.x;
-
-  if (idx < num) {
-    MT val = static_cast<MT>(in[idx]) * (*scale);
-    T narrow_val = static_cast<T>(val);
-    out[idx] = narrow_val;
-    if (!isfinite(narrow_val)) {
-      *found_inf = true;
+template<typename T>
+class AllocParam {
+public:
+  AllocParam(const int size, CUDAStream &context)
+  : _context(context), _size(size) {
+    // generate input size
+    nums = new int64_t[size];
+    std::vector<int64_t> offset(size + 1, 0);
+    for(int i = 0; i < size; i ++) {
+      nums[i] = rand() % MAXRAND + 1;
+      offset[i + 1] = offset[i] + nums[i];
+    }
+    // alloc memory
+    int64_t total_num = offset[size];
+    h_mem = new MallocHost<T>(total_num, context);
+    d_mem = new MallocDevice<T>(3 * total_num, context);
+    // generate input and copy to device
+    h_mem->Random();
+    d_mem->CopyFrom(*h_mem); // Copy size = total_num and offset = 0
+    // alloc memory
+    h_xs = new T*[size];
+    d_xs = new T*[size];
+    old_outs = new T*[size];
+    new_outs = new T*[size];
+    // set array address
+    T* h_data = h_mem->data();
+    T* in_data = d_mem->data();
+    T* old_out_data = in_data + total_num;
+    T* new_out_data = old_out_data + total_num;
+    for(int i = 0; i < size; i ++) {
+      h_xs[i] = h_data + offset[i];
+      d_xs[i] = in_data + offset[i];
+      old_outs[i] = old_out_data + offset[i];
+      new_outs[i] = new_out_data + offset[i];
     }
   }
-}
 
-template<typename T, typename MT>
-float TimeOfOldKernel(CUDAStream &dev_ctx, const T* in, const MT* scale, int num,
-                          bool* found_inf, T* out) {
-  auto clock = TimeOfKernel::get(dev_ctx);
-
-  int block = 1024;
-  int grid = (num + block - 1) / block;
-
-  clock->start();
-#pragma unroll
-  for(int i = 0; i < LOOPNUM; i ++) {
-    OldCheckFiniteAndUnscale<T, MT><<<grid, block, 0, dev_ctx.stream()>>>(
-          in, scale, num, found_inf, out);
+  ~AllocParam() {
+    delete nums;
+    nums = nullptr;
+    delete h_mem, d_mem;
+    h_mem = nullptr;
+    d_mem = nullptr;
+    delete h_xs, d_xs, old_outs, new_outs;
+    h_xs = d_xs = old_outs = new_outs = nullptr;
   }
-  float cost = clock->stop();
 
-  return cost;
+public:
+  int64_t *nums;
+  T** h_xs, **d_xs, **old_outs, **new_outs;
+
+private:
+  CUDAStream &_context;
+  const int _size;
+  MallocHost<T>* h_mem;
+  MallocDevice<T>* d_mem;
+};
+
+template<typename T>
+bool CheckResult(CUDAStream &context, const int size, int64_t* nums, T** old_outs, T** new_outs) {
+  return CheckSameDevice(old_outs[0], new_outs[0], GetSum(nums, size), context.stream());
 }
-
 /************************************************************************/
 
-template <typename T, typename MT>
-__global__ void CheckFiniteAndUnscaleLoop(const T* in, const MT* scale, int num,
-                                      bool* found_inf, T* out) {
-  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-  for (int idx = tid; idx < num; idx += gridDim.x * blockDim.x) {
-    MT val = static_cast<MT>(in[idx]) * (*scale);
-    T narrow_val = static_cast<T>(val);
-    out[idx] = narrow_val;
-    if (!isfinite(narrow_val)) {
-      *found_inf = true;
-    }
-  }
-}
-
 template<typename T, typename MT>
-float TimeOfLoopKernel(CUDAStream &dev_ctx, const T* in, const MT* scale, int num,
-                          bool* found_inf, T* out) {
-  auto clock = TimeOfKernel::get(dev_ctx);
-
-  int block = std::min(256, num);
-  int grid = (num + block - 1) / block;
-
-  clock->start();
-#pragma unroll
-  for(int i = 0; i < LOOPNUM; i ++) {
-    CheckFiniteAndUnscaleLoop<T, MT><<<grid, block, 0, dev_ctx.stream()>>>(
-          in, scale, num, found_inf, out);
-  }
-  float cost = clock->stop();
-
-  return cost;
-}
-
-/************************************************************************/
-template<typename T, typename MT>
-int TestKernel(CUDAStream &context, int num) {
-  MallocHost<T> h_old_in(num, context), h_new_in(num, context);
-  MallocDevice<T> d_old_in(num, context), d_new_in(num, context);
+int TestKernel(CUDAStream &context, const int size) {
   MallocDevice<MT> d_scale(1, context);
   MallocDevice<bool> d_found_inf(1, context);
-
-  MallocDevice<T> old_out(num, context), new_out(num, context);
-
   InitalKernel(context, d_scale.data(), d_found_inf.data());
 
-  h_old_in.Random();
-  d_old_in.CopyFrom(h_old_in);
-  h_new_in.Random();
-  d_new_in.CopyFrom(h_new_in);
+  AllocParam<T> params(size, context);
 
   char* name;
   float cost;
@@ -130,25 +98,30 @@ int TestKernel(CUDAStream &context, int num) {
   names.push_back(name);
 
   name = "Old Kernel";
-  cost = TimeOfOldKernel(context, d_old_in.data(), d_scale.data(),
-                              num, d_found_inf.data(), old_out.data());
+  cost = TimeOfOldKernel(context, size, params.nums, params.d_xs, d_scale.data(),
+                         d_found_inf.data(), params.old_outs);
   AfterRun();
 
-  name = "Loop Kernel";
-  cost = TimeOfLoopKernel(context, d_new_in.data(), d_scale.data(),
-                              num, d_found_inf.data(), new_out.data());
+  name = "Fused Kernel";
+  cost = TimeOfFusedKernel(context, size, params.nums, params.d_xs, d_scale.data(),
+                         d_found_inf.data(), params.new_outs);
   AfterRun();
 
   printf("*******************\n");
   auto err = context.sync();
   if(err != EMPTY_STRING) {
-    fprintf(stderr, "CUDA ERROR: %s\n", err);
+    fprintf(stderr, "[%d][%s] CUDA ERROR: %s\n",
+            GetSum(params.nums, size), ToString(params.nums, size).c_str(), err);
     return CUDA_FAILED;
   }
 
-  if(!old_out.CheckSame(new_out)) {
-    fprintf(stderr, "[%d] Result Check Failed\n", num);
+  if(!CheckResult(context, size, params.nums, params.old_outs, params.new_outs)) {
+    fprintf(stderr, "[%d][%s] Result Check Failed\n",
+            GetSum(params.nums, size), ToString(params.nums, size).c_str());
     return CHECK_FAILED;
+  } else {
+    printf("[%d][%s] Success\n",
+          GetSum(params.nums, size), ToString(params.nums, size).c_str());
   }
 
   return SUCCESS;
@@ -161,12 +134,12 @@ int main() {
   typedef float MT;
 
   do {
-    int num = 21504000;
+    int size = rand() % 20 + 1;
     // printf("Please Input num\n");
     // std::cin >> num;
-    if(TestKernel<T, MT>(context, num) != SUCCESS) break;
+    if(TestKernel<T, MT>(context, size) != SUCCESS) break;
     printf("\n");
-  } while(false);
+  } while(true);
 
   return 0;
 }
