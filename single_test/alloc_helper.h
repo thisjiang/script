@@ -154,7 +154,7 @@ public:
         return _size;
     }
 
-    int CopyFrom(const BaseAlloc &src) {
+    int CopyFrom(const BaseAlloc &src) override {
         assert(src.size() <= this->_size);
         if(is_device_place(src.place())) {
             cudaMemcpyAsync(_ptr, src.ptr<void>(), src.size(),
@@ -166,7 +166,7 @@ public:
         return src.size();
     }
 
-    int CopyTo(BaseAlloc &des) const {
+    int CopyTo(BaseAlloc &des) const override {
         assert(des.size() >= this->size());
         if(is_device_place(des.place())) {
             cudaMemcpyAsync(des.ptr<void>(), _ptr, _size, 
@@ -273,7 +273,7 @@ public:
         return _size;
     }
 
-    int CopyFrom(const BaseAlloc &src) {
+    int CopyFrom(const BaseAlloc &src) override {
         assert(src.size() <= this->_size);
             if(is_device_place(src.place())) {
                 cudaMemcpyAsync(_ptr, src.ptr<void>(), src.size(), 
@@ -285,7 +285,7 @@ public:
         return src.size();
     }
 
-    int CopyTo(BaseAlloc &des) const {
+    int CopyTo(BaseAlloc &des) const override {
     assert(des.size() >= this->size());
         if(is_device_place(des.place())) {
             cudaMemcpyAsync(des.ptr<void>(), _ptr, _size, 
@@ -405,8 +405,22 @@ public:
     void Random() {
         AllocHost::Random<T>();
     }
-    void Random(T a, T b) {
-        AllocHost::Random<T>(a, b);
+    template<typename T2>
+    void Random(T2 a, T2 b) {
+        T a_T, b_T;
+        if(std::is_same<T, T2>::value) {
+            a_T = a, b_T = b;
+        } else if(std::is_same<T, float16>::value &&
+                  !std::is_same<T2, float>::value) {
+            float a_f = type2type<T2, float>(a);
+            float b_f = type2type<T2, float>(b);
+            a_T = type2type<float, T>(a_f);
+            b_T = type2type<float, T>(b_f);
+        } else {
+            a_T = type2type<T2, T>(a);
+            b_T = type2type<T2, T>(b);
+        }
+        AllocHost::Random<T>(a_T, b_T);
     }
 };
 

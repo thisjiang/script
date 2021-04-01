@@ -373,10 +373,16 @@ RANDOM_FLOAT(double)
 #undef RANDOM_FLOAT
 
 template<>
-void Random<float16>(float16 *data, size_t n, const float16 b, const float16 a) {
+void Random<float16>(float16 *data, size_t n,
+                     const float16 b, const float16 a) {
+    float a_f = type2type<float16, float>(a);
+    float b_f = type2type<float16, float>(b);
     std::default_random_engine seed(time(0));
-    std::uniform_real_distribution<float> unirand(a, b);
-    for(int i = 0; i < n; i ++) data[i] = type2type<float, float16>(unirand(seed));
+    std::uniform_real_distribution<float> unirand(a_f, b_f);
+    for(int i = 0; i < n; i ++) {
+        float num = unirand(seed);
+        data[i] = type2type<float, float16>(num);
+    }
 }
 template<> void Random<float16>(float16 *data, size_t n) {
     Random<float16>(data, n, type2type<float, float16>(1.0f), 
