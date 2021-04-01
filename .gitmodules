@@ -4,3 +4,6 @@
 [submodule "single_test/eigen"]
 	path = single_test/eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "single_test/thrust"]
+	path = single_test/thrust
+	url = https://github.com/NVIDIA/thrust.git
