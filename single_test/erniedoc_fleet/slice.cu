@@ -79,24 +79,27 @@ int TestPaddingKernel(CUDAStream &context,
 
   auto err = context.sync();
   if(err != EMPTY_STRING) {
-    fprintf(stderr, "%s%s CUDA ERROR: %s\n",
+    fprintf(stderr, "%s%s[%d] CUDA ERROR: %s\n",
             ToString<int, rank>(input_dims).c_str(),
             ToString<int, rank>(output_dims).c_str(),
+            pad_size,
             err);
     printf("*******************\n");
     return CUDA_FAILED;
   }
 
   if(!old_outs.CheckSame(new_outs)) {
-    fprintf(stderr, "%s%s Result Check Failed\n",
+    fprintf(stderr, "%s%s[%d] Result Check Failed\n",
             ToString<int, rank>(input_dims).c_str(),
-            ToString<int, rank>(output_dims).c_str());
+            ToString<int, rank>(output_dims).c_str(),
+            pad_size);
     printf("*******************\n");
     return CHECK_FAILED;
   } else {
-    printf("%s%s Success\n",
-          ToString<int, rank>(input_dims).c_str(),
-          ToString<int, rank>(output_dims).c_str());
+    printf("%s%s[%d] Success\n",
+            ToString<int, rank>(input_dims).c_str(),
+            ToString<int, rank>(output_dims).c_str(),
+            pad_size);
     printf("*******************\n");
   }
 
