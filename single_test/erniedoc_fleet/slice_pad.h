@@ -280,7 +280,7 @@ __global__ void KePaddingOrCopy(const T *input_data,
 #pragma unroll
     for(int i = 0; i < rank; i ++) {
       dims[i] = k / out_stride_array[i];
-      if(dims[i] < paddings[i].first || dims[i] >= paddings[i].second) {
+      if(dims[i] < paddings[i].first || dims[i] >= paddings[i].second){
         set_zero = true;
         break;
       }
@@ -292,7 +292,7 @@ __global__ void KePaddingOrCopy(const T *input_data,
       int64_t in_id = 0;
 #pragma unroll
       for(int i = 0; i < rank; i ++) {
-        in_id += dims[i] * in_stride_array[i];
+        in_id += (dims[i] - paddings[i].first) * in_stride_array[i];
       }
       output_data[index] = input_data[in_id];
     }

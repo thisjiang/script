@@ -10,6 +10,10 @@
 
 constexpr int LOOPNUM = 100;
 
+__forceinline__ __device__ bool isfinite(half val) {
+  return __hisinf(val);
+} 
+
 template <typename MT>
 __global__ void KeInitial(const MT scale_val, MT* scale, bool* found_inf) {
   *scale = scale_val;

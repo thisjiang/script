@@ -3,6 +3,7 @@
 
 // C system file
 #include <stdio.h>
+#include <unistd.h>
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
@@ -20,10 +21,11 @@ int TestPaddingKernel(CUDAStream &context,
                const std::array<int, rank> &pad_start,
                const std::array<int, rank> &pad_end,
                const std::array<int, rank> &output_dims) {
-  int in_size = 1, out_size = 1;
+  int in_size = 1, out_size = 1, pad_size = 0;
   for(int i = 0; i < rank; i ++) {
     in_size *= input_dims[i];
     out_size *= output_dims[i];
+    pad_size += pad_start[i] + pad_end[i];
   }
 
   MallocHost<T> h_input(in_size, context);
@@ -50,6 +52,13 @@ int TestPaddingKernel(CUDAStream &context,
                                   old_outs.data());
   AfterRun();
 
+
+  // name = "Memcpy Kernel";
+  // cost = TestPaddingMemcpyKernel<T, rank>(context, input_dims, pad_start, 
+  //                                   pad_end, output_dims, d_input.data(),
+  //                                   new_outs.data());
+  // AfterRun();
+
   // name = "Padding Kernel";
   // cost = TestPaddingKernel<T, rank>(context, input_dims, pad_start, 
   //                                   pad_end, output_dims, d_input.data(),
@@ -62,17 +71,11 @@ int TestPaddingKernel(CUDAStream &context,
                                     new_outs.data());
   AfterRun();
 
-  // name = "Memcpy Kernel";
-  // cost = TestPaddingMemcpyKernel<T, rank>(context, input_dims, pad_start, 
-  //                                   pad_end, output_dims, d_input.data(),
-  //                                   new_outs.data());
-  // AfterRun();
-
-  // name = "PaddingOrCopy Kernel";
-  // cost = TestPaddingOrCopyKernel<T, rank>(context, input_dims, pad_start, 
-  //                                   pad_end, output_dims, d_input.data(),
-  //                                   new_outs.data());
-  // AfterRun();
+  name = "PaddingOrCopy Kernel";
+  cost = TestPaddingOrCopyKernel<T, rank>(context, input_dims, pad_start, 
+                                    pad_end, output_dims, d_input.data(),
+                                    new_outs.data());
+  AfterRun();
 
   auto err = context.sync();
   if(err != EMPTY_STRING) {
@@ -106,7 +109,7 @@ int main() {
 
   do {
     constexpr int rank = 4;
-#if 0
+#if 1
     std::array<int, rank> input_dims = {4, 12, 512, 640};
     std::array<int, rank> output_dims = {4, 12, 512, 1151};
     std::array<int, rank> pad_start = {0, 0, 0, 0};
@@ -118,29 +121,27 @@ int main() {
     std::array<int, rank> pad_end = {0, 0, 0, 0};
 #endif
 
-#if 0
-    int pad_size = 1;
+#if 1
 #pragma unroll
     for(int i = 0; i < rank; i ++) {
       input_dims[i] = rand() % 100 + 1;
-      pad_start[i] = rand() % 100;
-      pad_end[i] = rand() % 100;
-      pad_size = pad_start[i] + pad_end[i];
+      pad_start[i] = rand() % 20;
+      pad_end[i] = rand() % 20;
       output_dims[i] = input_dims[i] + pad_start[i] + pad_end[i];
     }
-    printf("Pad size %d\n", pad_size);
 #endif
     if(!TestPaddingKernel<float, rank>(context, input_dims, pad_start,
                                   pad_end, output_dims) == SUCCESS) {
       fprintf(stderr, "Float Error\n");
-      break;
+      // break;
     }
     if(!TestPaddingKernel<half, rank>(context, input_dims, pad_start,
                                   pad_end, output_dims) == SUCCESS) {
       fprintf(stderr, "Half Error\n");
-      break;
+      // break;
     }
     printf("\n\n");
-  } while(false);
+    sleep(1);
+  } while(true);
   return 0;
 }

@@ -130,7 +130,7 @@ int TestKernel(CUDAStream &context, const int size) {
 int main() {
   srand(time(0));
   CUDAStream context;
-  typedef float T;
+  typedef half T;
   typedef float MT;
 
   do {
@@ -139,7 +139,7 @@ int main() {
     // std::cin >> num;
     if(TestKernel<T, MT>(context, size) != SUCCESS) break;
     printf("\n");
-  } while(true);
+  } while(false);
 
   return 0;
 }
