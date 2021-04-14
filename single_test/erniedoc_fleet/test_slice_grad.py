@@ -31,11 +31,13 @@ else:
   x_sizes = [4, 12, 512, 640]
 
 # paddle
-pd_in = paddle.to_tensor(data=x_in, dtype='float16', place=paddle.CUDAPlace(0))
+pd_in = paddle.to_tensor(data=x_in, dtype='float16', place=paddle.CUDAPlace(0), stop_gradient=False)
 pd_starts = paddle.to_tensor(data=x_starts, dtype='int32', place=paddle.CUDAPlace(0))
 pd_ends = paddle.to_tensor(data=x_ends, dtype='int32', place=paddle.CUDAPlace(0))
 out_pd = paddle.slice(pd_in, x_axes, pd_starts, pd_ends)
 pd_res = out_pd.numpy()
+out_pd.backward()
+pd_dx = pd_in.grad
 
 # tensorflow
 with tf.device('/device:GPU:0'):
@@ -43,13 +45,17 @@ with tf.device('/device:GPU:0'):
   tf_starts = tf.constant(x_starts, dtype=tf.int32)
   tf_sizes = tf.constant(x_sizes, dtype=tf.int32)
 
-out_tf = tf.slice(tf_x, tf_starts, tf_sizes)
+with tf.GradientTape() as g:
+    g.watch(tf_x)
+    out_tf = tf.slice(tf_x, tf_starts, tf_sizes)
 tf_res = out_tf.numpy()
+tf_list = g.gradient(out_tf, [tf_x])
+tf_dx = tf_list[0].numpy()
 
 # check result
-tf_xerr = np.max(np.abs(pd_res - tf_res))
-print("Paddle Dx diff Tensorflow: {}".format(tf_xerr))
-if (tf_xerr > 1e-4):
+tf_dxerr = np.max(np.abs(pd_dx - tf_dx))
+print("Paddle Dx diff Tensorflow: {}".format(tf_dxerr))
+if (tf_dxerr > 1e-4):
   print("Tensorflow Compare ERROR")
   exit(0)
 
@@ -66,6 +72,14 @@ if x_in.size < 100:
   for i in tf_res:
     print(i, end=' ')
   print("")
+  print("paddl gradient:")
+  for i in pd_dx:
+    print(i, end=' ')
+  print("")
+  print("tensorflow gradient:")
+  for i in tf_dx:
+    print(i, end=' ')
+  print("")
 
 # time
 time_paddle = 0.0
@@ -73,7 +87,8 @@ time_paddle = 0.0
 # paddle
 t1 = time.time()
 for i in range(loopNum):
-  out_pd = paddle.slice(pd_in, x_axes, x_starts, x_ends)
+    out_pd = paddle.slice(pd_in, x_axes, x_starts, x_ends)
+    out_pd.backward()
 out_pd.numpy()
 t2 = time.time()
 time_paddle = t2 - t1
@@ -82,7 +97,10 @@ print("paddle: " + str(time_paddle) + " s")
 # tensorflow
 t1 = time.time()
 for i in range(loopNum):
-  out_tf = tf.slice(tf_x, tf_starts, tf_sizes)
+    with tf.GradientTape() as g:
+        g.watch(tf_x)
+        out_tf = tf.slice(tf_x, tf_starts, tf_sizes)
+        g.gradient(out_tf, [tf_x])
 out_tf.numpy()
 t2 = time.time()
 time_tf = t2 - t1

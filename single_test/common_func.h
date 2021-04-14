@@ -316,6 +316,7 @@ void Print(const T *data, const std::vector<int> &dims) {
         print(data[i]);
         printf(" ");
     }
+    printf("\n");
 }
 
 template<typename T, size_t D>

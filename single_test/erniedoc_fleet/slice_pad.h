@@ -24,7 +24,7 @@ using EigenPairArray = Eigen::array<std::pair<int64_t, int64_t>, rank>;
 template<typename T, size_t rank>
 void LaunchEigenKernel(Eigen::GpuDevice &dev_ctx,
                  EigenType<T, rank> &input_eigen,
-                 const Eigen::array<std::pair<int, int>, rank> &pad_eigen,
+                 const Eigen::array<Eigen::IndexPair<int>, rank> &pad_eigen,
                  EigenType<T, rank> &output_eigen) {
   output_eigen.device(dev_ctx) = input_eigen.pad(pad_eigen, T(0));
 }
@@ -41,13 +41,15 @@ float TimeEigenKernel(CUDAStream &context,
   Eigen::GpuStreamDevice stream(&context.stream());
   Eigen::GpuDevice dev_ctx(&stream);
 
-  Eigen::array<Eigen::Index, rank> indims_eigen, outdims_eigen;
+  Eigen::DSizes<int, rank> indims_eigen, outdims_eigen;
   for(int i = 0; i < rank; i ++) indims_eigen[i] = input_dims[i];
   for(int i = 0; i < rank; i ++) outdims_eigen[i] = output_dims[i];
   
-  Eigen::array<std::pair<int, int>, rank> pad_eigen;
-  for(int i = 0; i < rank; i ++)
-    pad_eigen[i] = std::make_pair(pad_start[i], pad_end[i]);
+  Eigen::array<Eigen::IndexPair<int>, rank> pad_eigen;
+  for(int i = 0; i < rank; i ++) {
+    pad_eigen[i].first = pad_start[i];
+    pad_eigen[i].second = pad_end[i];
+  }
 
   EigenType<T, rank> input_eigen(input_data, indims_eigen);
   EigenType<T, rank> output_eigen(output_data, outdims_eigen);
@@ -437,6 +439,107 @@ float TestPaddingEigenKernel(CUDAStream &context,
   }
   float cost = tt->stop();
 
+  return cost;
+}
+
+/************************************************************************/
+template<typename T, size_t rank>
+float TimeReshapeEigenKernel(CUDAStream &context,
+                 const std::array<int, rank> &input_dims,
+                 const std::array<int, rank> &pad_start,
+                 const std::array<int, rank> &pad_end,
+                 const std::array<int, rank> &output_dims,
+                 T *input_data,
+                 T *output_data) {
+  float cost = 0.0f;
+  auto tt = TimeOfKernel::get(context);
+
+  int pad_num = 0, reshape_dim = -1;
+  for(int i = 0; i < rank; i ++) {
+    if(pad_start[i] != 0 || pad_end[i] != 0) {
+      pad_num ++;
+      reshape_dim = i;
+    }
+  }
+
+  if(pad_num == 0) {
+    size_t in_size = GetSize(input_dims);
+    tt->start();
+    #pragma unroll
+    for(int i = 0; i < LOOPNUM; i ++) {
+      cudaMemcpyAsync(output_data, input_data, in_size * sizeof(T), cudaMemcpyDeviceToDevice, context.stream());
+    }
+    cost = tt->stop();
+  } else if(pad_num == 1) {
+    if(reshape_dim == rank - 1) {
+      printf("Last dim padding Path\n");
+
+      std::array<int, 2> padstart_reshape, padend_reshape;
+      padstart_reshape.fill(0), padend_reshape.fill(0);
+      std::array<int, 2> inputdims_reshape, outputdims_reshape;
+      inputdims_reshape.fill(1), outputdims_reshape.fill(1);
+
+      for(int i = 0; i < reshape_dim; i ++) {
+        inputdims_reshape[0] *= input_dims[i];
+        outputdims_reshape[0] *= output_dims[i];
+      }
+      inputdims_reshape[1] = input_dims[reshape_dim];
+      outputdims_reshape[1] = output_dims[reshape_dim];
+
+      padstart_reshape[1] = pad_start[reshape_dim];
+      padend_reshape[1] = pad_end[reshape_dim];
+
+      cost = TimeEigenKernel(context, inputdims_reshape, padstart_reshape, padend_reshape,
+                      outputdims_reshape, input_data, output_data);
+    } else if(reshape_dim == 0) {
+      printf("First dim padding Path\n");
+
+      std::array<int, 2> padstart_reshape, padend_reshape;
+      padstart_reshape.fill(0), padend_reshape.fill(0);
+      std::array<int, 2> inputdims_reshape, outputdims_reshape;
+      inputdims_reshape.fill(1), outputdims_reshape.fill(1);
+
+      inputdims_reshape[0] = input_dims[reshape_dim];
+      outputdims_reshape[0] = output_dims[reshape_dim];
+      for(int i = reshape_dim + 1; i < rank; i ++) {
+        inputdims_reshape[1] *= input_dims[i];
+        outputdims_reshape[1] *= output_dims[i];
+      }
+
+      padstart_reshape[0] = pad_start[reshape_dim];
+      padend_reshape[0] = pad_end[reshape_dim];
+
+      cost = TimeEigenKernel(context, inputdims_reshape, padstart_reshape, padend_reshape,
+                      outputdims_reshape, input_data, output_data);
+    } else {
+      printf("Other dims padding Path\n");
+
+      std::array<int, 3> padstart_reshape, padend_reshape;
+      padstart_reshape.fill(0), padend_reshape.fill(0);
+      std::array<int, 3> inputdims_reshape, outputdims_reshape;
+      inputdims_reshape.fill(1), outputdims_reshape.fill(1);
+
+      for(int i = 0; i < reshape_dim; i ++) {
+        inputdims_reshape[0] *= input_dims[i];
+        outputdims_reshape[0] *= output_dims[i];
+      }
+      inputdims_reshape[1] = input_dims[reshape_dim];
+      outputdims_reshape[1] = output_dims[reshape_dim];
+      for(int i = reshape_dim + 1; i < rank; i ++) {
+        inputdims_reshape[2] *= input_dims[i];
+        outputdims_reshape[2] *= output_dims[i];
+      }
+
+      padstart_reshape[1] = pad_start[reshape_dim];
+      padend_reshape[1] = pad_end[reshape_dim];
+
+      cost = TimeEigenKernel(context, inputdims_reshape, padstart_reshape, padend_reshape,
+                      outputdims_reshape, input_data, output_data);
+    }
+  } else {
+    cost = TimeEigenKernel(context, input_dims, pad_start, pad_end,
+                    output_dims, input_data, output_data);
+  }
   return cost;
 }
 /************************************************************************/
