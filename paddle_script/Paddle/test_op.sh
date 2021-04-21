@@ -1,8 +1,9 @@
 #!/bin/bash -ex
+echo $(date '+%Y-%m-%d %H:%M:%S')
 
-export CUDA_VISIBLE_DEVICES=3
+export CUDA_VISIBLE_DEVICES=2
 
-OP_NAME=where_index
+OP_NAME=$1
 KERNEL=LookupTableV2Grad
 FILE_SUFFIX=fp16
 
