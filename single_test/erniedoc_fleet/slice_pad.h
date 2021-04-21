@@ -454,6 +454,12 @@ float TimeReshapeEigenKernel(CUDAStream &context,
   float cost = 0.0f;
   auto tt = TimeOfKernel::get(context);
 
+  if(rank <= 3) {
+    cost = TimeEigenKernel(context, input_dims, pad_start, pad_end,
+                    output_dims, input_data, output_data);
+    return cost;
+  }
+
   int pad_num = 0, reshape_dim = -1;
   for(int i = 0; i < rank; i ++) {
     if(pad_start[i] != 0 || pad_end[i] != 0) {

@@ -2,12 +2,17 @@
 #define SCRIPT_COMMON_MATH_H
 
 #include "math.h"
+#include "limits.h"
+#include "float.h"
+#include "ctype.h"
 
 #include "cuda_runtime.h"
 #include "cuda_fp16.h"
 
 #include <vector>
 #include <array>
+#include <type_traits>
+#include <limits>
 
 /***********************************************************/
 

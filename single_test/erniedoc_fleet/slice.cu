@@ -52,8 +52,15 @@ int TestSliceKernel(CUDAStream &context,
                                   offsets, extents);
   AfterRun();
 
-  name = "Eigen Kernel";
+  name = "TF Eigen Kernel";
   cost = TimeTFEigenKernel<T, rank>(context,
+                                  d_input.data(), input_dims,
+                                  new_outs.data(), output_dims,
+                                  offsets, extents);
+  AfterRun();
+
+  name = "Reshaped Eigen Kernel";
+  cost = TimeReshapeEigenKernel<T, rank>(context,
                                   d_input.data(), input_dims,
                                   new_outs.data(), output_dims,
                                   offsets, extents);
@@ -91,7 +98,7 @@ int main() {
 
   do {
     constexpr int rank = 4;
-#if 0
+#if 1
     std::array<int64_t, rank> input_dims = {4, 12, 512, 1151};
     std::array<int64_t, rank> output_dims = {4, 12, 512, 640};
     std::array<int64_t, rank> offsets = {0, 0, 0, 0};
@@ -103,15 +110,19 @@ int main() {
     std::array<int64_t, rank> extents = {4, 12, 1151, 512};
 #endif
 
-#if 0
-#pragma unroll
+#if 1
     for(int i = 0; i < rank; i ++) {
-      output_dims[i] = rand() % 100 + 1;
-      offsets[i] = rand() % 10 + 1;
-      extents[i] = rand() % 10 + 1;
-      input_dims[i] = output_dims[i] + offsets[i] + extents[i];
+      input_dims[i] = rand() % 100 + 1;
+      offsets[i] = 0;
+      extents[i] = input_dims[i];
+      output_dims[i] = input_dims[i];
     }
+    int dim = rand() % rank;
+    offsets[dim] = rand() % (input_dims[dim] - 1);
+    extents[dim] = rand() % (input_dims[dim] - offsets[dim] - 1) + 1;
+    output_dims[dim] = offsets[dim] + extents[dim];
 #endif
+    auto a = Eigen::array<std::pair<int64_t, int64_t>, 2>({{0, 0}, {0, 0}});
     if(!TestSliceKernel<float, rank>(context, input_dims, output_dims,
                                        offsets, extents) == SUCCESS) {
       fprintf(stderr, "Float Error\n");
@@ -124,6 +135,6 @@ int main() {
     }
     printf("\n****************************************\n");
     sleep(1);
-  } while(false);
+  } while(true);
   return 0;
 }

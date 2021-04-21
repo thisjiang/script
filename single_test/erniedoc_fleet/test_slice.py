@@ -30,6 +30,23 @@ else:
   x_ends = [10000000, 10000000, 10000000, 640]
   x_sizes = [4, 12, 512, 640]
 
+if False:
+  x_shape = []
+  for index in range(4):
+    x_shape.append(np.random.randint(100) + 1)
+  x_in = np.random.uniform(0, 10, x_shape)
+  x_axes = [0, 1, 2, 3]
+  x_starts = [0, 0, 0, 0]
+  x_ends = [10000000, 10000000, 10000000, 10000000]
+  x_sizes = x_shape[:]
+
+  x_dims = np.random.randint(4)
+  x_starts[x_dims] = np.random.randint(x_shape[x_dims] - 1)
+  x_ends[x_dims] = np.random.randint(1, x_shape[x_dims] - x_starts[x_dims]) + x_starts[x_dims]
+  x_sizes[x_dims] = x_ends[x_dims] - x_starts[x_dims]
+  print("shape {}, dims {}, starts {}, ends {}".format(x_shape, x_dims, x_starts, x_ends))
+
+
 # paddle
 pd_in = paddle.to_tensor(data=x_in, dtype='float16', place=paddle.CUDAPlace(0))
 pd_starts = paddle.to_tensor(data=x_starts, dtype='int32', place=paddle.CUDAPlace(0))
