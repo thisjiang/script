@@ -53,12 +53,12 @@ public:
   }
 
   ~AllocParam() {
-    delete nums;
+    delete [] nums;
     nums = nullptr;
     delete h_mem, d_mem;
     h_mem = nullptr;
     d_mem = nullptr;
-    delete h_xs, d_xs, old_outs, new_outs;
+    delete [] h_xs, d_xs, old_outs, new_outs;
     h_xs = d_xs = old_outs = new_outs = nullptr;
   }
 

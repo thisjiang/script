@@ -82,10 +82,23 @@ public:
         assert(this->place() == data.place());
         bool check_res = true;
         if(this->is_host()) {
-            check_res = CheckSameHost(this->_ptr, data.ptr<void>(), this->_size);
+            check_res = CheckSameHost<char>(this->ptr<char>(), data.ptr<char>(),
+                                            this->_size);
         } else {
             check_res = CheckSameDevice<char>(this->ptr<char>(), data.ptr<char>(),
                                             this->_size, this->stream());
+        }
+        return check_res;
+    }
+
+    template<typename T, template<typename T2>  class Functor>
+    bool CheckAllTrue() {
+        bool check_res = true;
+        if(this->is_host()) {
+            check_res = CheckAllTrueHost<T, Functor>(this->ptr<T>(), this->_size / sizeof(T));
+        } else {
+            check_res = CheckAllTrueDevice<T, Functor>(
+                            this->ptr<T>(), this->_size / sizeof(T), _stream);
         }
         return check_res;
     }

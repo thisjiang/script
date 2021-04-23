@@ -127,7 +127,8 @@ typename GetAccType<T>::type MaxErrorDevice(
 template<typename T>
 bool CheckSameHost(const T *a, const T *b, size_t n) {
     return memcmp(reinterpret_cast<const void*>(a),
-                  reinterpret_cast<const void*>(b), n) == 0;
+                  reinterpret_cast<const void*>(b),
+                  n * sizeof(T)) == 0;
 }
 
 template<typename T>
@@ -155,6 +156,49 @@ bool CheckSameDevice(const T *a, const T *b, size_t n,
     cudaFree(err_d); // implict sync
 
     return err_h == 0;
+}
+
+/***********************************************************/
+template<typename T, template<typename T2> class Functor>
+bool CheckAllTrueHost(const T* a, size_t n) {
+    bool find_false = false;
+    for(size_t i = 0; i < n; i ++) {
+        if(!Functor<T>()(a[i])) {
+            find_false = true;
+            break;
+        }
+    }
+    return !find_false;
+}
+
+template<typename T, template<typename T2> class Functor>
+__global__ void KeCheckAllTrue(const T* a, size_t n, bool *find_false) {
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+    for(int i = id; i < n; i += blockDim.x * gridDim.x) {
+        if(!Functor<T>()(a[i])) *find_false = true;
+    }
+}
+
+
+template<typename T, template<typename T2> class Functor>
+bool CheckAllTrueDevice(const T* a, size_t n, cudaStream_t &stream) {
+    bool *find_false;
+    cudaMalloc(&find_false, sizeof(bool));
+    cudaMemsetAsync(find_false, 0, sizeof(bool), stream);
+
+    int blocks = std::min(static_cast<size_t>(1024), n);
+    int grids = (n + blocks - 1) / blocks;
+
+    KeCheckAllTrue<T, Functor><<<grids, blocks, 0, stream>>>(
+                    a, n, find_false);
+
+    bool result = false;
+    cudaMemcpyAsync(&result, find_false, sizeof(bool),
+                    cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
+    cudaFree(find_false); // implict sync
+
+    return !result;
 }
 
 /***********************************************************/
