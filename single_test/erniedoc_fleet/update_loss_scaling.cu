@@ -20,7 +20,7 @@ constexpr int MAXRAND = 100000;
 template<typename T2>
 struct AllEqualToZero{
   HOSTDEVICE bool operator()(const T2 &num) {
-    return static_cast<T2>(0) == num;
+    return type2type<float, T2>(0.0f) == num;
   }
 };
 
@@ -90,22 +90,16 @@ private:
 
 template<typename T>
 int TestKernel(CUDAStream &context, const size_t xs_size, const bool found_inf) {
+  fprintf(stderr, "******************************************\n");
   AllocParam<T> params(xs_size, found_inf, context);
 
-  auto err2 = context.sync();
-  if(err2 != EMPTY_STRING) {
-    fprintf(stderr, "[%zd, %ld, %d] Alloc CUDA ERROR: %s\n",
-            xs_size, params.total_num, static_cast<int>(found_inf), err2);
-    return CUDA_FAILED;
-  }
-
-  char* name;
+  std::string name;
   float cost;
   std::vector<float> costs;
   std::vector<std::string> names;
 
 #define AfterRun()  \
-  printf("%s cost %f\n", name, cost); \
+  printf("%s cost %f\n", name.c_str(), cost); \
   costs.push_back(cost);  \
   names.push_back(name);
 
@@ -113,7 +107,14 @@ int TestKernel(CUDAStream &context, const size_t xs_size, const bool found_inf) 
   cost = TimeOfOldKernel(context, params.found_inf_data, xs_size, params.nums, params.outs);
   AfterRun();
 
-  printf("*******************\n");
+  name = "Memset Kernel";
+  cost = TimeOfMemsetKernel(context, params.found_inf_data, xs_size, params.nums, params.outs);
+  AfterRun();
+
+  name = "Fused Kernel";
+  cost = TimeOfFusedKernel(context, params.found_inf_data, xs_size, params.nums, params.outs);
+  AfterRun();
+
   auto err = context.sync();
   if(err != EMPTY_STRING) {
     fprintf(stderr, "[%zd, %ld, %d] CUDA ERROR: %s\n",
@@ -130,13 +131,6 @@ int TestKernel(CUDAStream &context, const size_t xs_size, const bool found_inf) 
             xs_size, params.total_num, static_cast<int>(found_inf));
   }
 
-  auto err3 = context.sync();
-  if(err3 != EMPTY_STRING) {
-    fprintf(stderr, "[%zd, %ld, %d] Check CUDA ERROR: %s\n",
-            xs_size, params.total_num, static_cast<int>(found_inf), err3);
-    return CUDA_FAILED;
-  }
-
   return SUCCESS;
 }
 
@@ -149,11 +143,11 @@ int main() {
     // printf("Please Input num\n");
     // std::cin >> num;
     printf("Float:\n");
-    if(TestKernel<float>(context, size, true) != SUCCESS) break;
     if(TestKernel<float>(context, size, false) != SUCCESS) break;
-    printf("Half:\n");
-    if(TestKernel<half>(context, size, true) != SUCCESS) break;
+    if(TestKernel<float>(context, size, true) != SUCCESS) break;
+    printf("\n\nHalf:\n");
     if(TestKernel<half>(context, size, false) != SUCCESS) break;
+    if(TestKernel<half>(context, size, true) != SUCCESS) break;
     printf("\n");
   } while(false);
 

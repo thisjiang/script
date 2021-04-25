@@ -69,8 +69,12 @@ public:
         return CopyTo(des_ptr, byte_len, Place::DEVICE);
     }
 
-    virtual int CopyFrom(const BaseAlloc &src) = 0;
-    virtual int CopyTo(BaseAlloc &des) const = 0;
+    virtual int CopyFrom(const BaseAlloc &src) {
+        return this->CopyFrom(src.ptr<void>(), src.size(), src.place());
+    }
+    virtual int CopyTo(BaseAlloc &des) const {
+        return this->CopyTo(des.ptr<void>(), des.size(), des.place());
+    }
 
     void SetZero() {
         if(this->is_device()) cudaMemsetAsync(_ptr, 0, _size, _stream);
@@ -168,27 +172,10 @@ public:
     }
 
     int CopyFrom(const BaseAlloc &src) override {
-        assert(src.size() <= this->_size);
-        if(is_device_place(src.place())) {
-            cudaMemcpyAsync(_ptr, src.ptr<void>(), src.size(),
-                            cudaMemcpyDeviceToHost, _stream);
-        } else {
-            cudaMemcpyAsync(_ptr, src.ptr<void>(), src.size(), 
-                            cudaMemcpyHostToHost, _stream);
-        }
-        return src.size();
+        return BaseAlloc::CopyFrom(src);
     }
-
     int CopyTo(BaseAlloc &des) const override {
-        assert(des.size() >= this->size());
-        if(is_device_place(des.place())) {
-            cudaMemcpyAsync(des.ptr<void>(), _ptr, _size, 
-                            cudaMemcpyHostToDevice, _stream);
-        } else {
-            cudaMemcpyAsync(des.ptr<void>(), _ptr, _size, 
-                            cudaMemcpyHostToHost, _stream);
-        }
-        return _size;
+        return BaseAlloc::CopyTo(des);
     }
 
     void resize(size_t new_size, bool preserve = false) override {
@@ -287,27 +274,10 @@ public:
     }
 
     int CopyFrom(const BaseAlloc &src) override {
-        assert(src.size() <= this->_size);
-            if(is_device_place(src.place())) {
-                cudaMemcpyAsync(_ptr, src.ptr<void>(), src.size(), 
-                                cudaMemcpyDeviceToDevice, _stream);
-            } else {
-                cudaMemcpyAsync(_ptr, src.ptr<void>(), src.size(), 
-                                cudaMemcpyHostToDevice, _stream);
-            }
-        return src.size();
+        return BaseAlloc::CopyFrom(src);
     }
-
     int CopyTo(BaseAlloc &des) const override {
-    assert(des.size() >= this->size());
-        if(is_device_place(des.place())) {
-            cudaMemcpyAsync(des.ptr<void>(), _ptr, _size, 
-                            cudaMemcpyDeviceToDevice, _stream);
-        } else {
-            cudaMemcpyAsync(des.ptr<void>(), _ptr, _size, 
-                            cudaMemcpyDeviceToHost, _stream);
-        }
-        return _size;
+        return BaseAlloc::CopyTo(des);
     }
 
     void resize(size_t new_size, bool preserve = false) override {
@@ -333,7 +303,7 @@ public:
 
 #define MACRO_COPYTOTMP                         \
     AllocHost tmp(this->_size, this->_context); \
-    this->CopyTo(tmp);                          \
+    BaseAlloc::CopyTo(tmp);                     \
     const char *err = this->_context.sync();    \
     if(err != "") {                             \
         fprintf(stderr, "%s\n", err);           \

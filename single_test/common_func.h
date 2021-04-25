@@ -242,8 +242,8 @@ static inline const std::string ToString(const T *dims, int n) {
 }
 
 /***********************************************************/
-template<typename T> void print(const T &val, const char *end = "") {}
-template<typename T> void fprint(const T &val, const char *end = "") {}
+template<typename T> void print(const T &val, const char *end = " ") {}
+template<typename T> void fprint(const T &val, const char *end = " ") {}
 
 #define PRINT_ARGS(T, FORMAT, VAL)  \
     template<> void print<T>(const T &val, const char *end) {  \
@@ -294,8 +294,7 @@ void Print(const T *data, const int row, const int col) {
     printf("[%d, %d]\n", row, col);
     for(int i = 0; i < row; i ++) {
         for(int j = 0; j < col; j ++) {
-            print(data[i * col + j]);
-            printf(" ");
+            print(data[i * col + j], " ");
         }
         printf("\n");
     }
@@ -309,8 +308,7 @@ void Print(const T *data, const int num, const int row, const int col) {
         printf("[%d]\n", k);
         for(int i = 0; i < row; i ++) {
             for(int j = 0; j < col; j ++) {
-                print(data[k * stride + i * col + j]);
-                printf(" ");
+                print(data[k * stride + i * col + j], " ");
             }
             printf("\n");
         }
@@ -357,8 +355,7 @@ void Print(const T *data, const std::vector<int> &dims) {
            for(int j = 0; j < D - 2; j ++) printf(" %d,", len / stride[j]);
            printf("]\n");
         }
-        print(data[i]);
-        printf(" ");
+        print(data[i], " ");
     }
     printf("\n");
 }
