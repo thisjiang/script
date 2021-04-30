@@ -28,7 +28,13 @@ namespace platform {
 }
 }
 
+namespace platform {
+  typedef half float16;
+}
+
 /***********************************************************/
+
+inline namespace details {
 
 template <typename T>
 struct GetAccType {
@@ -39,36 +45,57 @@ struct GetAccType<paddle::platform::float16> {
   using type = float;
 };
 
+template <typename T>
+class MPTypeTrait {
+ public:
+  using Type = T;
+};
+
+template <>
+class MPTypeTrait<platform::float16> {
+ public:
+  using Type = float;
+};
+
 template <typename T, int N>
 struct GetVecType;
 template <typename T>
 struct GetVecType<T, 1> {
   using type = T;
+  using Type = type;
 };
 template <>
 struct GetVecType<paddle::platform::float16, 2> {
   using type = half2;
+  using Type = type;
 };
 template <>
 struct GetVecType<paddle::platform::float16, 4> {
   using type = float2;
+  using Type = type;
 };
 template <>
 struct GetVecType<float, 2> {
   using type = float2;
+  using Type = type;
 };
 template <>
 struct GetVecType<float, 4> {
   using type = float4;
+  using Type = type;
 };
 template <>
 struct GetVecType<double, 2> {
   using type = double2;
+  using Type = type;
 };
 template <>
 struct GetVecType<double, 4> {
   using type = double4;
+  using Type = type;
 };
+
+} // namespace detail
 
 /***********************************************************/
 

@@ -95,7 +95,6 @@ __global__ void CheckFiniteAndUnscaleFused(const T* const * xs, const MT* scale,
   for (int64_t idx = tid; idx < num; idx += gridDim.x * blockDim.x) {
     // get the xs's index of thread
     int xs_index = pre_xs_index;
-    while(idx < s_starts[xs_index]) xs_index ++;
     // avoid some tensor's numel is zero
     while(idx >= s_starts[xs_index]) xs_index ++;
     pre_xs_index = xs_index - 1;
@@ -140,14 +139,15 @@ float TimeOfFusedKernel(CUDAStream &dev_ctx, const int size, int64_t* nums, cons
   d_in.CopyFrom(in, size * sizeof(T*), get_host_place());
   d_out.CopyFrom(out, size * sizeof(T*), get_host_place());
 
-  int threads = 1024;
-  int grids = (total_num + threads - 1) / threads;
+  int threads_per_block = 1024;
+  int elements_per_block = threads_per_block * 20;  // each thread deal with 20 number
+  int blocks_per_grid = (total_num + elements_per_block - 1) / elements_per_block;
 
   clock->start();
 #pragma unroll
   for(int i = 0; i < LOOPNUM; i ++) {
     CheckFiniteAndUnscaleFused<T, MT>
-      <<<grids, threads, (size + 1) * sizeof(int64_t), dev_ctx.stream()>>>(
+      <<<blocks_per_grid, threads_per_block, (size + 1) * sizeof(int64_t), dev_ctx.stream()>>>(
       d_in.data(), scale, size, d_starts.data(), found_inf, d_out.data()
     );
   }

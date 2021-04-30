@@ -84,8 +84,6 @@ __global__ void FusedFillIf(T** outs, const int64_t xs_size,
   for (int64_t id = tid; id < total_num; id += blockDim.x * gridDim.x) {
     // get the out's index of thread
     int next_out_index = out_index;
-    while(id < starts_s[next_out_index]) next_out_index ++;
-    // avoid some tensor's numel is zero
     while(id >= starts_s[next_out_index]) next_out_index ++;
     out_index = next_out_index - 1;
 

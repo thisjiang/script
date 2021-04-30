@@ -11,14 +11,15 @@ cuda.select_device(0)
 
 LOOPNUM = 1000
 
-x = np.random.uniform(0.1, 0.9, (2, 10, 100, 100))
-y = np.random.uniform(0.1, 0.9, (100, 100))
+x = np.random.uniform(0.1, 0.9, (100, 2048, 7, 7))
+y = np.random.uniform(0.1, 0.9, (100, 2048))
+axis = 0
 
 #paddle
 pd_x = paddle.to_tensor(data=x, dtype='float32', place=paddle.CUDAPlace(0), stop_gradient=False)
 pd_y = paddle.to_tensor(data=y, dtype='float32', place=paddle.CUDAPlace(0), stop_gradient=False)
 
-out_pd = paddle.fluid.layers.elementwise_max(pd_x, pd_y)
+out_pd = paddle.fluid.layers.elementwise_div(pd_x, pd_y, axis=axis)
 pd_res = out_pd.numpy()
 out_pd.backward()
 pd_dx = pd_x.grad
@@ -32,7 +33,7 @@ with tf.device('/device:GPU:0'):
 with tf.GradientTape() as g:
     g.watch(tf_x)
     g.watch(tf_y)
-    out_tf = tf.math.maximum(tf_x, tf_y)
+    out_tf = tf.math.divide(tf_x, tf_y)
 tf_res = out_tf.numpy()
 tf_list = g.gradient(out_tf, [tf_x, tf_y])
 tf_dx = tf_list[0].numpy()
@@ -42,7 +43,7 @@ tf_dy = tf_list[1].numpy()
 th_x = torch.tensor(x, dtype=torch.float32, device=torch.device('cuda:0'), requires_grad=True)
 th_y = torch.tensor(y, dtype=torch.float32, device=torch.device('cuda:0'), requires_grad=True)
 
-out_th = torch.maximum(th_x, th_y)
+out_th = torch.div(th_x, th_y)
 th_res = out_th.cpu().detach().numpy()
 out_th.backward(gradient=torch.ones_like(out_th))
 th_dx = th_x.grad.cpu().numpy()
