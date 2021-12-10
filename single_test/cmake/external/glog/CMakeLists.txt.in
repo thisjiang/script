@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.10)
+
+project(googlelog-download NONE)
+
+include(ExternalProject)
+
+ExternalProject_Add(googlelog
+  GIT_REPOSITORY    ${GIT_URL}/google/glog.git
+  GIT_TAG           v0.5.0
+  SOURCE_DIR        "${CMAKE_CURRENT_BINARY_DIR}/googlelog-src"
+  BINARY_DIR        "${CMAKE_CURRENT_BINARY_DIR}/googlelog-build"
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND     ""
+  INSTALL_COMMAND   ""
+  TEST_COMMAND      ""
+)
