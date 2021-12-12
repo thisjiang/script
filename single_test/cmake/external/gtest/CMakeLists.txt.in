@@ -5,12 +5,14 @@ project(googletest-download NONE)
 include(ExternalProject)
 
 ExternalProject_Add(googletest
-  URL               ${GIT_URL}/google/googletest.git
-  GIT_TAG           v1.8.1
+  GIT_REPOSITORY    ${GIT_URL}/google/googletest.git
+  GIT_TAG           release-1.11.0
   SOURCE_DIR        "${CMAKE_CURRENT_BINARY_DIR}/googletest-src"
   BINARY_DIR        "${CMAKE_CURRENT_BINARY_DIR}/googletest-build"
+  INSTALL_DIR       "${THIRD_PARTY_INSTALL_PATH}"
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
   INSTALL_COMMAND   ""
   TEST_COMMAND      ""
+  CMAKE_ARGS        "-DCMAKE_INSTALL_PREFIX=${THIRD_PARTY_INSTALL_PATH}"
 )

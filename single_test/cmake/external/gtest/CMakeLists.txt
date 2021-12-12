@@ -17,16 +17,8 @@ if(result)
   message(FATAL_ERROR "Build step for googletest failed: ${result}")
 endif()
 
-# Prevent overriding the parent project's compiler/linker
-# settings on Windows
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-# Prevent installation of GTest with your project
-set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-set(INSTALL_GMOCK OFF CACHE BOOL "" FORCE)
-
 set(GTEST_LIBRARY "${THIRD_PARTY_PATH}/lib/libgtest.a" CACHE FILEPATH "gtest libraries." FORCE)
 set(GTEST_MAIN_LIBRARY "${THIRD_PARTY_PATH}/lib/gtest_main.lib" CACHE FILEPATH "gtest main libraries." FORCE)
-set(GTEST_INCLUDE_DIR )
 
 # Add googletest directly to our build. This defines
 # the gtest and gtest_main targets.

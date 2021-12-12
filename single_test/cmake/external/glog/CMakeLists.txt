@@ -31,7 +31,3 @@ SET(GLOG_LIBRARIES "${CMAKE_CURRENT_BINARY_DIR}/googlelog-build/libglog.so" CACH
 if(NOT TARGET GLog::GLog)
     add_library(GLog::GLog ALIAS glog)
 endif()
-
-install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/googlelog-build/lib*"
-        DESTINATION "${THIRD_PARTY_PATH}/lib"
-     	  USE_SOURCE_PERMISSIONS FILES_MATCHING PATTERN "*.so*")
