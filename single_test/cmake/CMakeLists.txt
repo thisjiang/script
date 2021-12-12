@@ -7,6 +7,12 @@ endif()
 
 add_subdirectory(cuda)
 
+# some necessarily macro
+MACRO(UNSET_VAR VAR_NAME)
+    UNSET(${VAR_NAME} CACHE)
+    UNSET(${VAR_NAME})
+ENDMACRO()
+
 # import third party library
 include(ExternalProject)
 
@@ -27,5 +33,24 @@ endif()
 
 set(THIRD_PARTY_BUILD_TYPE Release)
 
-# add_subdirectory(external)
-include(external/glog)      # download, build, install glog
+# add third party
+include(external/gflags.cmake)
+include(external/glog.cmake)
+include(external/gtest.cmake)
+include(external/eigen.cmake)
+
+find_package(Boost REQUIRED COMPONENTS filesystem system)
+if(NOT Boost_FOUND)
+    message(WARNING
+            "Boost not found, compile and install may cost a few minutes,"
+            " or you can run 'apt install libboost-dev' manually.")
+    include(external/boost.cmake)
+endif()
+
+find_package(Protobuf REQUIRED)
+if(NOT PROTOBUF_FOUND)
+    message(WARNING
+            "Protobuf not found, compile and install may cost a few minutes,"
+            " or you can run 'apt install libprotobuf-dev' manually.")
+    include(external/protobuf.cmake)
+endif()
