@@ -1,5 +1,14 @@
-find_package(Boost REQUIRED COMPONENTS filesystem system)
+find_package(Boost REQUIRED)
 if(Boost_FOUND)
+    include_directories(${Boost_INCLUDE_DIR})
+    link_directories(${Boost_LIBRARY_DIRS})
+
+    set(Boost_USE_STATIC_LIBS        OFF)
+    set(Boost_USE_MULTITHREADED      ON)
+    set(Boost_USE_STATIC_RUNTIME     OFF)
+    set(BOOST_ALL_DYN_LINK           ON)
+
+    list(APPEND third_party_deps Boost::boost)
     return()
 endif()
 

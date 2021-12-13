@@ -3,9 +3,8 @@ if (${CMAKE_CUDA_COMPILER_VERSION} LESS 11.0)
 endif()
 
 # set cuda c++ version
-set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 14)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_FLAGS  "${CMAKE_CUDA_FLAGS} -std c++17")
 
 # set cuda flags
 set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}")
