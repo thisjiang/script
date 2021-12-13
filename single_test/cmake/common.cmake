@@ -55,6 +55,8 @@ function(cc_test TARGET_NAME)
   get_property(os_dependency_modules GLOBAL PROPERTY OS_DEPENDENCY_MODULES)
   target_link_libraries(${TARGET_NAME} ${cc_test_DEPS} ${os_dependency_modules} ${third_party_deps})
   add_dependencies(${TARGET_NAME} ${cc_test_DEPS} ${third_party_deps})
+
+  add_test(${TARGET_NAME} ${TARGET_NAME})
 endfunction(cc_test)
 
 
@@ -115,3 +117,7 @@ function(cuda_test TARGET_NAME)
     set_target_properties(${TARGET_NAME} PROPERTIES VS_USER_PROPS ${WIN_PROPS})
   endif()
 endfunction(cuda_test)
+
+function(add_source FILE_NAME)
+  list(APPEND source_file_list ${FILE_NAME})
+endfunction()

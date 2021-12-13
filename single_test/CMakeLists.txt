@@ -84,6 +84,7 @@ include(cmake/external/protobuf.cmake)
 
 list(APPEND third_party_deps eigen3 gflags glog gtest)
 
+set(source_file_list)
 include(cmake/common.cmake)
 
 add_subdirectory(CUDA)

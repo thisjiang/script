@@ -1,4 +1,4 @@
-// Copyright (c) 2021 jiangcheng05 Authors. All Rights Reserved.
+// Copyright (c) 2021 thisjiang Authors. All Rights Reserved.
 
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
