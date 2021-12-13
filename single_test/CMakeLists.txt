@@ -1,36 +1,23 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 
 project(CUDAScript LANGUAGES CXX CUDA)
 
-# Check C++ version
-include(CheckCXXCompilerFlag)
-CHECK_CXX_COMPILER_FLAG("-std=c++17" COMPILER_SUPPORTS_CXX17)
+# add global argument
+option(PY_VERSION       "Compile with python3 support"     ${PY_VERSION})
 
-if(NOT COMPILER_SUPPORTS_CXX17)
-  message(FATAL_ERROR "The compiler ${CMAKE_CXX_FLAGS} has no c++17 support.")
-endif()
+include(cmake/check.cmake)
 
-set(CMAKE_CXX_STANDARD 17 CACHE STRING "Default C++ standard")
-set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "Require C++ standard")
-
+# print config value
 message(STATUS "C++ compile: ${CMAKE_CXX_COMPILER}")
-
-# Check CUDA version
-include(CheckLanguage)
-check_language(CUDA)
-
 message(STATUS "CUDA compile: ${CMAKE_CUDA_COMPILER}")
+message(STATUS "Python version: ${Python3_EXECUTABLE}")
 
+
+# set CUDA arguments
 include(cmake/cuda.cmake)
 
-# Check python version
-option(PY_VERSION       "Compile PaddlePaddle with python3 support"     ${PY_VERSION})
-# PY_VERSION
-if(NOT PY_VERSION)
-  set(PY_VERSION 3.6)
-endif()
+# set python arguments
 set(PYBIND11_PYTHON_VERSION ${PY_VERSION})
-
 
 # set install path
 if( CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT )
@@ -47,13 +34,6 @@ LOG_BUILD       0     # Wrap build in script to log output
 LOG_TEST        1     # Wrap test in script to log output
 LOG_INSTALL     0     # Wrap install in script to log output
 )
-
-# config GIT_URL with github mirrors to speed up dependent repos clone
-find_package(Git REQUIRED)
-option(GIT_URL "Git URL to clone dependent repos" ${GIT_URL})
-if(NOT GIT_URL)
-    set(GIT_URL "https://github.com/")
-endif()
 
 # some necessarily macro
 MACRO(UNSET_VAR VAR_NAME)

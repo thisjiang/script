@@ -1,15 +1,7 @@
-if (${CMAKE_CUDA_COMPILER_VERSION} LESS 11.0)
-  message(FATAL_ERROR "CUDA Version should greater than 11.0, but here ${CMAKE_CUDA_COMPILER_VERSION}")
-endif()
-
-# set cuda c++ version
-set(CMAKE_CUDA_STANDARD 14)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # set cuda flags
 set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}")
 set(CUDA_LINK_LIBRARIES_KEYWORD PUBLIC)
-message(STATUS "[CUDA] nvcc global flags: ${CUDA_NVCC_FLAGS}")
 
 # auto detect cuda arch
 function(detect_installed_gpus out_variable)
@@ -49,8 +41,8 @@ function(detect_installed_gpus out_variable)
   endif()
 
   if(NOT CUDA_gpu_detect_output)
-    message(STATUS "Automatic GPU detection failed. Building for all known architectures.")
-    set(${out_variable} ${paddle_known_gpu_archs} PARENT_SCOPE)
+    message(STATUS "Automatic GPU detection failed. Building for sm_70s architectures default.")
+    set(${out_variable} 7.0 PARENT_SCOPE)
   else()
     set(${out_variable} ${CUDA_gpu_detect_output} PARENT_SCOPE)
   endif()
