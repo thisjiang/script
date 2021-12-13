@@ -33,5 +33,5 @@ if( CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT )
   set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install" CACHE STRING "The path to use for make install" FORCE)
 endif()
 
-# add subdirectory
-add_subdirectory(cmake)
+# add comon cmake file
+include(cmake/main.cmake)

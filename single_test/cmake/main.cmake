@@ -5,7 +5,7 @@ if(NOT GIT_URL)
     set(GIT_URL "https://github.com/")
 endif()
 
-add_subdirectory(cuda)
+include(cuda.cmake)
 
 # some necessarily macro
 MACRO(UNSET_VAR VAR_NAME)
@@ -38,19 +38,8 @@ include(external/gflags.cmake)
 include(external/glog.cmake)
 include(external/gtest.cmake)
 include(external/eigen.cmake)
+include(external/cub.cmake)
+include(external/boost.cmake)
+include(external/protobuf.cmake)
 
-find_package(Boost REQUIRED COMPONENTS filesystem system)
-if(NOT Boost_FOUND)
-    message(WARNING
-            "Boost not found, compile and install may cost a few minutes,"
-            " or you can run 'apt install libboost-dev' manually.")
-    include(external/boost.cmake)
-endif()
-
-find_package(Protobuf REQUIRED)
-if(NOT PROTOBUF_FOUND)
-    message(WARNING
-            "Protobuf not found, compile and install may cost a few minutes,"
-            " or you can run 'apt install libprotobuf-dev' manually.")
-    include(external/protobuf.cmake)
-endif()
+list(APPEND third_party_deps extern_eigen3 extern_gflags extern_glog extern_gtest)

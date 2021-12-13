@@ -1,3 +1,12 @@
+find_package(Protobuf REQUIRED)
+if(PROTOBUF_FOUND)
+    return()
+endif()
+
+message(WARNING
+        "Protobuf not found, compile and install may cost a few minutes,"
+        " or you can run 'apt install libprotobuf-dev' manually.")
+
 INCLUDE(ExternalProject)
 # Always invoke `FIND_PACKAGE(Protobuf)` for importing function protobuf_generate_cpp
 IF(NOT WIN32)
@@ -239,3 +248,6 @@ IF(NOT PROTOBUF_FOUND)
     set(EXTERN_PROTOBUF_DEPEND extern_protobuf)
     PROMPT_PROTOBUF_LIB(extern_protobuf)
 ENDIF(NOT PROTOBUF_FOUND)
+
+
+list(APPEND third_party_deps extern_protobuf)

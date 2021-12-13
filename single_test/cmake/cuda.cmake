@@ -100,3 +100,16 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr")
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-extended-lambda")
 
 message(STATUS "CUDA FLAGS: ${CMAKE_CUDA_FLAGS}")
+
+# set build type flags
+if(NOT WIN32)
+  set(CMAKE_CUDA_FLAGS_DEBUG "-g")
+  set(CMAKE_CUDA_FLAGS_RELEASE "-O3 -DNDEBUG")
+  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG")
+  set(CMAKE_CUDA_FLAGS_MINSIZEREL "-O1 -DNDEBUG")
+else()
+  set(CMAKE_CUDA_FLAGS_DEBUG "-Xcompiler=\"-MDd -Zi -Ob0 -Od /RTC1\"")
+  set(CMAKE_CUDA_FLAGS_RELEASE "-Xcompiler=\"-MD -O2 -Ob2\" -DNDEBUG")
+  set(CMAKE_CUDA_FLAGS_RELWITHDEBINFO "-Xcompiler=\"-MD -Zi -O2 -Ob1\" -DNDEBUG")
+  set(CMAKE_CUDA_FLAGS_MINSIZEREL "-Xcompiler=\"-MD -O1 -Ob1\" -DNDEBUG")
+endif()

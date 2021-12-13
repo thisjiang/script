@@ -1,3 +1,12 @@
+find_package(Boost REQUIRED COMPONENTS filesystem system)
+if(Boost_FOUND)
+    return()
+endif()
+
+message(WARNING
+        "Boost not found, compile and install may cost a few minutes,"
+        " or you can run 'apt install libboost-dev' manually.")
+
 INCLUDE(ExternalProject)
 
 SET(BOOST_PREFIX_DIR  ${THIRD_PARTY_PATH}/boost)
@@ -44,3 +53,4 @@ ADD_LIBRARY(boost STATIC IMPORTED GLOBAL)
 # SET_PROPERTY(TARGET boost PROPERTY IMPORTED_LOCATION ${BOOST_LIBRARIES})
 ADD_DEPENDENCIES(boost extern_boost)
 
+list(APPEND third_party_deps extern_boost)
