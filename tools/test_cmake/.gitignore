@@ -1,0 +1,17 @@
+*~
+*.swp
+*.swo
+*.swn
+*.pyc
+*.o
+*.a
+*.so
+*.ll
+build*
+.idea*
+*.html
+*.rej
+*.orig
+*.patch
+*.ipynb
+.vscode*
