@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-find_package(GTest 1.12.0)
+find_package(GTest 1.12.0 MODULE)
 
 ENABLE_TESTING()
 

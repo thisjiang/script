@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-find_package(gflags 2.2.2)
+find_package(gflags 2.2.2 MODULE)
 
 if(GFLAGS_FOUND)
   message(STATUS "Found gflags version ${GFLAGS_VERSION}")
@@ -44,7 +44,7 @@ else()
     INSTALL_COMMAND ${GFLAGS_INSTALL}
   )
 
-  # ADD_LIBRARY(gflags STATIC IMPORTED GLOBAL)
+  ADD_LIBRARY(gflags STATIC IMPORTED GLOBAL)
   SET_PROPERTY(TARGET gflags PROPERTY IMPORTED_LOCATION ${GFLAGS_LIBRARIES_DIR})
   ADD_DEPENDENCIES(gflags extern_gflags)
 

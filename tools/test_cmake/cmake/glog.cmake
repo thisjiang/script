@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-find_package(glog 0.6.0)
+find_package(glog 0.6.0 MODULE)
 
 if(GLOG_FOUND)
   message(STATUS "Found glog version ${GLOG_VERSION}")
