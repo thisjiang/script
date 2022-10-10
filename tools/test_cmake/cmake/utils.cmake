@@ -57,7 +57,7 @@ endfunction(cc_library)
 # @param DEPS dependent libraries list
 # @param ARGS execute arguments list
 function(cc_exec TARGET_NAME)
-  set(options SERIAL)
+  set(options "")
   set(oneValueArgs "")
   set(multiValueArgs SRCS DEPS ARGS)
   cmake_parse_arguments(cc_test "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -72,7 +72,7 @@ endfunction(cc_exec)
 # @param DEPS dependent libraries
 # @param ARGS execute arguments
 function(cc_test TARGET_NAME)
-  set(options SERIAL)
+  set(options "")
   set(oneValueArgs "")
   set(multiValueArgs SRCS DEPS ARGS)
   cmake_parse_arguments(cc_test "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -101,11 +101,33 @@ endfunction()
 # @param source file list name
 # @param SRCS source file list
 function(collect_srcs SRC_GROUP)
-  set(options)
-  set(oneValueArgs)
+  set(options "")
+  set(oneValueArgs "")
   set(multiValueArgs "SRCS")
-  cmake_parse_arguments(prefix "" "" "${multiValueArgs}" ${ARGN})
+  cmake_parse_arguments(prefix "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
   foreach(cpp ${prefix_SRCS})
     set(${SRC_GROUP} "${${SRC_GROUP}};${CMAKE_CURRENT_SOURCE_DIR}/${cpp}" CACHE INTERNAL "")
+  endforeach()
+endfunction()
+
+# @brief auto collect source file and generate the test excutable file
+# @param DEPS dependent libraries
+# @param ARGS execute arguments
+# @param EXCLUDES exclude file list, no need to compile by auto_cc_test
+function(auto_cc_test)
+  set(options "")
+  set(oneValueArgs "")
+  set(multiValueArgs "DEPS" "ARGS" "EXCLUDES")
+  cmake_parse_arguments(AUTOTEST "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  file(GLOB test_files LIST_DIRECTORIES false RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.c" "*.cc" "*.cpp")
+
+  if(AUTOTEST_EXCLUDES)
+    list(REMOVE_ITEM test_files ${AUTOTEST_EXCLUDES})
+  endif()
+
+  foreach(cpp ${test_files})
+    get_filename_component(file_name ${cpp} NAME_WE)
+    cc_test(${file_name} SRCS ${cpp} DEPS ${AUTOTEST_DEPS} ARGS ${AUTOTEST_ARGS})
   endforeach()
 endfunction()
