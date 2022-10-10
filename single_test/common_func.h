@@ -10,7 +10,7 @@
 #include <random>
 #include <initializer_list>
 
-#include "cub/cub/cub.cuh"
+#include <cub/cub.cuh>
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 

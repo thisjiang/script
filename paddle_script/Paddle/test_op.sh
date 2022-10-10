@@ -1,7 +1,9 @@
 #!/bin/bash -ex
 echo $(date '+%Y-%m-%d %H:%M:%S')
 
-export CUDA_VISIBLE_DEVICES=2
+export CPU_NUM=1
+export CUDA_VISIBLE_DEVICES=4
+export LD_LIBRARY_PATH=/Paddle/Paddle/build/third_party/CINN/src/external_cinn-build/:${LD_LIBRARY_PATH}
 
 OP_NAME=$1
 KERNEL=LookupTableV2Grad
