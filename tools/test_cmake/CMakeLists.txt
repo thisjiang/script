@@ -20,6 +20,9 @@ project(LearningCmake CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+include_directories(${CMAKE_SOURCE_DIR})
+include_directories(${CMAKE_BINARY_DIR})
+
 option(WITH_TEST "Compile with Unittests" ON)
 
 set(THIRD_PARTY_PATH "${CMAKE_BINARY_DIR}/third_party")

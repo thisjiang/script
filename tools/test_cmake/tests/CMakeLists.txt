@@ -12,4 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-auto_cc_test(DEPS ${EXTERN_LIBRARY})
+cc_exec(do_test SRCS do_test.cpp DEPS ${EXTERN_LIBRARY})
+
+cc_library(test_template SRCS test_template.cpp DEPS ${EXTERN_LIBRARY})
+
+cc_test(do_gtest SRCS do_gtest.cpp DEPS ${EXTERN_LIBRARY} test_template)

@@ -12,10 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License
 
+#include <vector>
+#include <string>
+#include <cmath>
+
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+
+#include "tests/test_template.h"
 
 TEST(DO_GTEST, Case1) {
   ASSERT_TRUE(true);
   LOG(INFO) << "TEST Success\n";
+}
+
+TEST(DO_GTEST, test_template) {
+  std::vector<bool> x = {true, false, true};
+  test_func(x);
+}
+
+TEST(DO_GTEST, test_pow) {
+  LOG(INFO) << "2^2=" << powf(2.0, 2.0);
 }

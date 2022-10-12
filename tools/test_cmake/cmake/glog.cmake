@@ -32,7 +32,8 @@ else()
                               -DBUILD_SHARED_LIBS=OFF
                               -DWITH_GFLAGS=OFF
                               -DWITH_GTEST=OFF
-                              -DBUILD_TESTING=OFF)
+                              -DBUILD_TESTING=OFF
+                              -DWITH_UNWIND=ON)
   SET(GLOG_MAKE       cd ${GLOG_SOURCES_DIR}/src/extern_glog && make)
   SET(GLOG_INSTALL    cd ${GLOG_SOURCES_DIR}/src/extern_glog && make install)
 
@@ -48,8 +49,8 @@ else()
 
   ADD_LIBRARY(glog STATIC IMPORTED GLOBAL)
   SET_PROPERTY(TARGET glog PROPERTY IMPORTED_LOCATION ${GLOG_LIBRARIES_DIR})
-  ADD_DEPENDENCIES(glog extern_glog gflags)
-  LINK_LIBRARIES(glog gflags)
+  ADD_DEPENDENCIES(glog extern_glog gflags unwind)
+  LINK_LIBRARIES(glog gflags unwind)
 
   SET(GLOG_LIBRARIES glog)
 endif()

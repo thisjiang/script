@@ -12,20 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License
 
-#include <glog/logging.h>
-
-#include <optional>
+#include <vector>
 #include <string>
 
-int main() {
-  // test C++17
-  std::optional<std::string> ss;
-  ss = "C++17 supported";
-  if (ss) {
-    LOG(INFO) << ss.value();
-  } else {
-    LOG(INFO) << "C++17 not supported\n";
-  }
+#include <glog/logging.h>
 
-  return 0;
+template <typename T>
+void test_func(const std::vector<T>& x) {
+  LOG(INFO) << x.data()[0];
 }
+
+template<> void test_func<bool>(const std::vector<bool>& x);
