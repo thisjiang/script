@@ -12,32 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-cmake_minimum_required(VERSION 3.10)
+# specify the C++ standard
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-project(LearningCmake CXX C)
+set(CMAKE_BUILD_TYPE "Release")
+set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY TRUE)
 
-include(cmake/config.cmake)
+set(CMAKE_DEPENDS_IN_PROJECT_ONLY TRUE)
+set(CMAKE_FIND_PACKAGE_WARN_NO_MODULE TRUE)
 
-include_directories(${CMAKE_SOURCE_DIR})
-include_directories(${CMAKE_BINARY_DIR})
-
-option(WITH_TEST "Compile with Unittests" ON)
-
-set(THIRD_PARTY_PATH "${CMAKE_BINARY_DIR}/third_party")
-set(EXTERN_LIBRARY CACHE INTERNAL "" FORCE)
-
-include(cmake/gflags.cmake)
-include(cmake/glog.cmake)
-
-if (WITH_TEST)
-  set(TEST_LIBRARY CACHE INTERNAL "" FORCE)
-  include(cmake/gtest.cmake)
-endif()
-
-include(cmake/utils.cmake)
-
-add_subdirectory(src)
-
-if (WITH_TEST)
-  add_subdirectory(tests)
-endif()
+set(CMAKE_WARN_DEPRECATED TRUE)
