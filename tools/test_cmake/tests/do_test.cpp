@@ -1,4 +1,4 @@
-// Copyright (c) 2022 jiangcheng Authors. All Rights Reserved.
+// Copyright (c) 2022 thisjiang Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 #include <glog/logging.h>
 
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -26,6 +27,8 @@ int main() {
   } else {
     LOG(INFO) << "C++17 not supported\n";
   }
+
+  LOG(INFO) << (0 >= 0UL && 0 < 800UL);
 
   return 0;
 }

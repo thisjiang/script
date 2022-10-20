@@ -1,4 +1,4 @@
-// Copyright (c) 2022 jiangcheng Authors. All Rights Reserved.
+// Copyright (c) 2022 thisjiang Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License
 
-#include <vector>
-#include <string>
-#include <cmath>
-
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+
+#include <cmath>
+#include <string>
+#include <vector>
 
 #include "tests/test_template.h"
 
@@ -31,6 +31,4 @@ TEST(DO_GTEST, test_template) {
   test_func(x);
 }
 
-TEST(DO_GTEST, test_pow) {
-  LOG(INFO) << "2^2=" << powf(2.0, 2.0);
-}
+TEST(DO_GTEST, test_pow) { LOG(INFO) << "2^2=" << powf(2.0, 2.0); }

@@ -12,9 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License
 
-#include "tests/test_template.h"
+#include <cmath>
+#include <optional>
+#include <string>
 
-template <>
-void test_func<bool>(const std::vector<bool>& x) {
-  LOG(INFO) << x[0];
+#include "cub/cub.cuh"
+#include "cuda.h"
+#include "glog/logging.h"
+
+__global__ void test_func(int x) { printf("[blockIdx.x: %d threadIdx.x: %d] Value: %d\n", blockIdx.x, threadIdx.x, x); }
+
+int main() {
+  test_func<<<1, 1>>>(111111);
+  CHECK_EQ(cudaDeviceSynchronize(), cudaSuccess);
+
+  return 0;
 }

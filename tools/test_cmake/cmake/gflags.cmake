@@ -1,4 +1,4 @@
-# Copyright (c) 2022 jiangcheng Authors. All Rights Reserved.
+# Copyright (c) 2022 thisjiang Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-find_package(gflags 2.2.2 MODULE)
+if (WIN32)
+  find_package(gflags 2.2.2 MODULE)
+else()
+  find_package(gflags 2.2.2)
+endif()
 
 if(GFLAGS_FOUND)
   message(STATUS "Found gflags version ${GFLAGS_VERSION}")
@@ -44,7 +48,9 @@ else()
     INSTALL_COMMAND ${GFLAGS_INSTALL}
   )
 
-  ADD_LIBRARY(gflags STATIC IMPORTED GLOBAL)
+  if (WIN32)
+    ADD_LIBRARY(gflags STATIC IMPORTED GLOBAL)
+  endif()
   SET_PROPERTY(TARGET gflags PROPERTY IMPORTED_LOCATION ${GFLAGS_LIBRARIES_DIR})
   ADD_DEPENDENCIES(gflags extern_gflags)
 

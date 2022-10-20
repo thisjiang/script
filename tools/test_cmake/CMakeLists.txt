@@ -1,4 +1,4 @@
-# Copyright (c) 2022 jiangcheng Authors. All Rights Reserved.
+# Copyright (c) 2022 thisjiang Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,12 +22,19 @@ include_directories(${CMAKE_SOURCE_DIR})
 include_directories(${CMAKE_BINARY_DIR})
 
 option(WITH_TEST "Compile with Unittests" ON)
+option(WITH_CUDA "Compile with CUDA" OFF)
 
 set(THIRD_PARTY_PATH "${CMAKE_BINARY_DIR}/third_party")
 set(EXTERN_LIBRARY CACHE INTERNAL "" FORCE)
 
 include(cmake/gflags.cmake)
 include(cmake/glog.cmake)
+
+if (WITH_CUDA)
+  set(CUDA_EXTERN_LIBRARY CACHE INTERNAL "" FORCE)
+  include(cmake/cuda.cmake)
+  include(cmake/nvtx.cmake)
+endif()
 
 if (WITH_TEST)
   set(TEST_LIBRARY CACHE INTERNAL "" FORCE)

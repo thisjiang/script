@@ -1,4 +1,4 @@
-// Copyright (c) 2022 jiangcheng Authors. All Rights Reserved.
+// Copyright (c) 2022 thisjiang Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,14 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License
 
-#include <vector>
-#include <string>
+#pragma once
 
 #include <glog/logging.h>
+
+#include <string>
+#include <vector>
 
 template <typename T>
 void test_func(const std::vector<T>& x) {
   LOG(INFO) << x.data()[0];
 }
 
-template<> void test_func<bool>(const std::vector<bool>& x);
+template <>
+void test_func<bool>(const std::vector<bool>& x);
