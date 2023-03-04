@@ -1,0 +1,5 @@
+target("test")
+    set_kind("binary")
+    add_deps("hello")
+    add_packages("gtest")
+    add_files("*.cc")
